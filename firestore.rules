@@ -1,0 +1,143 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "haddoyframes@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasOnlyAllowedFields(allowedFields) {
+      return request.resource.data.keys().hasOnly(allowedFields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidUser() {
+      let data = request.resource.data;
+      return hasOnlyAllowedFields(['email', 'hasPin', 'pin', 'subscription_tier', 'subscription_status', 'role', 'unlocked_cac_years', 'created_at']) &&
+             data.email is string && isValidEmail(data.email) &&
+             (!('hasPin' in data) || data.hasPin is bool) &&
+             (!('pin' in data) || (data.pin is string && data.pin.size() >= 4 && data.pin.size() <= 6)) &&
+             data.subscription_tier in ['free', 'basic', 'pro'] &&
+             data.subscription_status in ['active', 'expired', 'pending'] &&
+             (!('role' in data) || data.role in ['admin', 'user']) &&
+             (!('unlocked_cac_years' in data) || data.unlocked_cac_years is list) &&
+             (!('created_at' in data) || data.created_at == null || (data.created_at is string && data.created_at.size() < 50));
+    }
+
+    function isValidBusinessInfo() {
+      let data = request.resource.data;
+      return hasOnlyAllowedFields(['name', 'logo_url', 'is_subscribed', 'rc_number', 'id', 'payment_gateway', 'monnify_test_mode']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             (!('logo_url' in data) || data.logo_url == null || (data.logo_url is string && data.logo_url.size() < 1000000)) &&
+             (!('is_subscribed' in data) || data.is_subscribed == null || data.is_subscribed is number) &&
+             (!('rc_number' in data) || data.rc_number == null || (data.rc_number is string && data.rc_number.size() < 50)) &&
+             (!('payment_gateway' in data) || data.payment_gateway == null || data.payment_gateway in ['paystack', 'monnify']) &&
+             (!('monnify_test_mode' in data) || data.monnify_test_mode == null || data.monnify_test_mode is bool) &&
+             (!('id' in data) || data.id == null || (data.id is string && data.id.size() < 100));
+    }
+
+    function isValidInventoryItem() {
+      let data = request.resource.data;
+      return hasOnlyAllowedFields(['name', 'description', 'price', 'stock', 'photo_url', 'size', 'vat_status', 'id']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             (!('description' in data) || data.description == null || (data.description is string && data.description.size() < 1000)) &&
+             data.price is number && data.price >= 0 &&
+             data.stock is number && data.stock >= 0 &&
+             (!('photo_url' in data) || data.photo_url == null || (data.photo_url is string && data.photo_url.size() < 1000000)) &&
+             (!('size' in data) || data.size == null || (data.size is string && data.size.size() < 100)) &&
+             (!('vat_status' in data) || data.vat_status == null || data.vat_status in ['vatable', 'exempt', 'zero_rated']) &&
+             (!('id' in data) || data.id == null || (data.id is string && data.id.size() < 100));
+    }
+
+    function isValidTransaction() {
+      let data = request.resource.data;
+      return hasOnlyAllowedFields(['type', 'amount', 'category', 'date', 'product_id', 'customer_id', 'quantity', 'description', 'vat_status', 'id', 'item_name']) &&
+             data.type in ['sale', 'expense'] &&
+             data.amount is number && data.amount >= 0 &&
+             data.category is string && data.category.size() > 0 && data.category.size() < 100 &&
+             data.date is string && data.date.size() < 50 &&
+             (!('product_id' in data) || data.product_id == null || (data.product_id is string && data.product_id.size() < 100) || data.product_id is number) &&
+             (!('customer_id' in data) || data.customer_id == null || (data.customer_id is string && data.customer_id.size() < 100) || data.customer_id is number) &&
+             (!('quantity' in data) || data.quantity == null || (data.quantity is number && data.quantity >= 0)) &&
+             (!('description' in data) || data.description == null || (data.description is string && data.description.size() < 1000)) &&
+             (!('vat_status' in data) || data.vat_status == null || data.vat_status in ['vatable', 'exempt', 'zero_rated']) &&
+             (!('item_name' in data) || data.item_name == null || (data.item_name is string && data.item_name.size() < 200)) &&
+             (!('id' in data) || data.id == null || (data.id is string && data.id.size() < 100));
+    }
+
+    function isValidCustomer() {
+      let data = request.resource.data;
+      return hasOnlyAllowedFields(['name', 'email', 'phone', 'address', 'created_at', 'id']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             (!('email' in data) || data.email == null || (data.email is string && data.email.size() < 100)) &&
+             (!('phone' in data) || data.phone == null || (data.phone is string && data.phone.size() < 50)) &&
+             (!('address' in data) || data.address == null || (data.address is string && data.address.size() < 500)) &&
+             (!('created_at' in data) || data.created_at == null || (data.created_at is string && data.created_at.size() < 50)) &&
+             (!('id' in data) || data.id == null || (data.id is string && data.id.size() < 100));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if (isOwner(userId) && isValidUser() && (!('role' in request.resource.data) || request.resource.data.role == 'user')) || isAdmin();
+      allow update: if (isOwner(userId) && isValidUser() && (!('role' in request.resource.data) || request.resource.data.role == resource.data.role)) || isAdmin();
+      allow delete: if isOwner(userId) || isAdmin();
+
+      match /business_info/{infoId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) && isValidBusinessInfo();
+        allow update: if isOwner(userId) && isValidBusinessInfo();
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      match /inventory/{itemId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) && isValidInventoryItem();
+        allow update: if isOwner(userId) && isValidInventoryItem();
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      match /transactions/{transactionId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) && isValidTransaction();
+        allow update: if isOwner(userId) && isValidTransaction();
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      match /customers/{customerId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) && isValidCustomer();
+        allow update: if isOwner(userId) && isValidCustomer();
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      match /billing_history/{historyId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isAdmin();
+        allow update: if isAdmin();
+        allow delete: if isAdmin();
+      }
+    }
+  }
+}
