@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "GOMAXPROCS=1 vite build",
+    "build": "NODE_OPTIONS=--max-old-space-size=400 GOMAXPROCS=1 vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
