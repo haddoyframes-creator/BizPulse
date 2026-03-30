@@ -2533,15 +2533,6 @@ function CACAnnualReport({ user, transactions, business }: { user: User | null, 
       }
 
       const data = await response.json();
-      } catch (e) {
-        // Fallback if JSON parsing fails
-        const text = response.text || '';
-        if (text.includes("NOT_FOUND")) {
-          data = { name: "NOT_FOUND" };
-        } else {
-          data = { name: text.trim() };
-        }
-      }
 
       console.log("CAC Lookup result:", data);
 
