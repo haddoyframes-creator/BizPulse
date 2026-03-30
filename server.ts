@@ -865,6 +865,175 @@ app.get("/api/stats", authenticateToken, async (req: any, res) => {
   }
 });
 
+app.post("/api/ai/verify-rc", authenticateToken, async (req: any, res) => {
+  const { rcNumber } = req.body;
+  
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
+    return res.status(400).json({ error: "Gemini API key is missing or invalid." });
+  }
+  
+  const ai = new GoogleGenAI({ apiKey });
+  
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `You are a corporate registry assistant. Your task is to find the exact company details for a Nigerian company registered with the Corporate Affairs Commission (CAC) using its RC number (Registration Number).
+      The RC number to search for is: ${rcNumber}.
+      Use Google Search to find the official company name, registered address, and primary business activity. Search specifically for "RC ${rcNumber} Nigeria" or look up CAC directories.
+      It is CRITICAL that you return the exact company name associated with this specific RC number. Do not guess or return a similar company. If you are not 100% sure, return "NOT_FOUND" for the name.
+      Return ONLY a raw JSON object with the following keys:
+      - "name": The full official registered company name (or "NOT_FOUND" if you cannot find a definitive match for this exact RC number)
+      - "address": The registered office address (or empty string if not found)
+      - "activity": The primary nature of business or activity (or empty string if not found)
+      Do not include any markdown formatting or backticks.`,
+      config: {
+        tools: [{ googleSearch: {} }],
+      },
+    });
+
+    let data;
+    try {
+      const text = response.text || '{}';
+      const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+      data = JSON.parse(cleanText);
+    } catch (e) {
+      const text = response.text || '';
+      const nameMatch = text.match(/"name"\s*:\s*"([^"]+)"/);
+      const addressMatch = text.match(/"address"\s*:\s*"([^"]+)"/);
+      const activityMatch = text.match(/"activity"\s*:\s*"([^"]+)"/);
+      
+      data = {
+        name: nameMatch ? nameMatch[1] : "NOT_FOUND",
+        address: addressMatch ? addressMatch[1] : "",
+        activity: activityMatch ? activityMatch[1] : ""
+      };
+    }
+    res.json(data);
+  } catch (error: any) {
+    console.error("AI Error:", error);
+    res.status(500).json({ error: "Failed to verify RC number" });
+  }
+});
+
+app.post("/api/ai/generate-tax-estimate", authenticateToken, async (req: any, res) => {
+  const { taxType, year, businessType, annualTurnover, annualProfit, monthlySales, employees, avgSalary, state } = req.body;
+  
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
+    return res.status(400).json({ error: "Gemini API key is missing or invalid." });
+  }
+  
+  const ai = new GoogleGenAI({ apiKey });
+  const model = "gemini-3-flash-preview";
+
+  let reportFocus = "";
+  if (taxType === 'cit') {
+    reportFocus = `
+    Provide:
+    1. Estimated Company Income Tax (CIT) according to the Nigerian tax law for ${year} (e.g., 0% for small companies < ₦25m, 20% for medium ₦25m-₦100m, 30% for large > ₦100m).
+    2. Estimated Education Tax (Tertiary Education Trust Fund - TETFund) at 3% of assessable profit (if applicable for ${year}).
+    3. Relevant tax incentives or exemptions applicable in ${year}.
+    4. A formal report summary suitable for submission to the Federal Inland Revenue Service (FIRS) for the ${year} assessment year.
+    `;
+  } else if (taxType === 'vat') {
+    reportFocus = `
+    Provide:
+    1. A detailed monthly breakdown of Value Added Tax (VAT) at 7.5% for products that are VATable for every month based on the monthly sales provided.
+    2. Brief explanation of VAT filing obligations and deadlines for that period.
+    3. A formal VAT report summary suitable for submission to the Federal Inland Revenue Service (FIRS).
+    `;
+  } else if (taxType === 'paye') {
+    reportFocus = `
+    Provide:
+    1. Estimated Pay As You Earn (PAYE) tax for the ${employees} employees based on the average monthly salary of ₦${avgSalary}.
+    2. Breakdown of the Consolidated Relief Allowance (CRA) and the specific tax brackets (7%, 11%, 15%, 19%, 21%, 24%) applied to the taxable income.
+    3. Estimated monthly and annual PAYE remittance to the ${state} State Internal Revenue Service.
+    4. Brief explanation of PAYE filing obligations and deadlines.
+    `;
+  } else {
+    reportFocus = `
+    Provide:
+    1. Estimated Company Income Tax (CIT) according to the Nigerian tax law for ${year} (e.g., 0% for small companies < ₦25m, 20% for medium ₦25m-₦100m, 30% for large > ₦100m).
+    2. A detailed monthly breakdown of Value Added Tax (VAT) at 7.5% for products that are VATable for every month based on the monthly sales provided.
+    3. Estimated Education Tax (Tertiary Education Trust Fund - TETFund) at 3% of assessable profit (if applicable for ${year}).
+    4. Estimated Pay As You Earn (PAYE) tax for the ${employees} employees based on the average monthly salary of ₦${avgSalary}, showing the tax brackets applied.
+    5. Relevant tax incentives or exemptions applicable in ${year}.
+    6. A formal report summary suitable for submission to the Federal Inland Revenue Service (FIRS) and ${state} State Internal Revenue Service for the ${year} assessment year.
+    `;
+  }
+  
+  const prompt = `
+    As a Nigerian tax expert, provide an annual tax estimate for the year ${year} for the following business:
+    - Business Type: ${businessType}
+    - Annual Turnover: ₦${annualTurnover}
+    - Annual Net Profit: ₦${annualProfit}
+    - Monthly Sales Data (Array of 12 months, each containing vatable, exempt, and zero_rated sales): ${JSON.stringify(monthlySales)}
+    - Number of Employees: ${employees}
+    - Average Monthly Salary per Employee: ₦${avgSalary}
+    - State of Operation: ${state}
+    
+    IMPORTANT: Base this estimate on the Nigerian tax laws (Finance Acts, CIT, PIT, etc.) as they existed in ${year}.
+    
+    ${reportFocus}
+    
+    Format the response in Markdown.
+  `;
+
+  try {
+    const result = await ai.models.generateContent({
+      model,
+      contents: [{ parts: [{ text: prompt }] }],
+    });
+    res.json({ estimate: result.text });
+  } catch (error: any) {
+    console.error("AI Error:", error);
+    res.status(500).json({ error: "Failed to generate estimate" });
+  }
+});
+
+app.post("/api/ai/business-insights", authenticateToken, async (req: any, res) => {
+  const { businessName, transactions, customQuestion } = req.body;
+  
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
+    return res.status(400).json({ error: "Gemini API key is missing or invalid." });
+  }
+  
+  const ai = new GoogleGenAI({ apiKey });
+  const model = "gemini-3-flash-preview";
+
+  const totalRevenue = transactions.filter((t: any) => t.type === 'sale').reduce((sum: number, t: any) => sum + t.amount, 0);
+  const totalExpenses = transactions.filter((t: any) => t.type === 'expense').reduce((sum: number, t: any) => sum + t.amount, 0);
+  const netProfit = totalRevenue - totalExpenses;
+
+  const basePrompt = `
+    You are an expert AI Business Advisor for a Nigerian business named "${businessName || 'the business'}".
+    Here is their financial summary:
+    - Total Revenue: ₦${totalRevenue.toLocaleString()}
+    - Total Expenses: ₦${totalExpenses.toLocaleString()}
+    - Net Profit: ₦${netProfit.toLocaleString()}
+    
+    Recent Transactions (up to 20):
+    ${JSON.stringify(transactions)}
+  `;
+
+  const prompt = customQuestion 
+    ? `${basePrompt}\n\nThe user has a specific question: "${customQuestion}"\nProvide a helpful, professional, and actionable response based on their financial data.`
+    : `${basePrompt}\n\nPlease provide 3-5 personalized, actionable business insights or recommendations based on this data. Focus on cash flow, expense reduction, or revenue growth opportunities. Format the response in Markdown.`;
+
+  try {
+    const result = await ai.models.generateContent({
+      model,
+      contents: [{ parts: [{ text: prompt }] }],
+    });
+    res.json({ insights: result.text });
+  } catch (error: any) {
+    console.error("AI Error:", error);
+    res.status(500).json({ error: "Failed to generate insights" });
+  }
+});
+
 app.post("/api/advice", authenticateToken, async (req: any, res) => {
   const { period, year, transactions, inventory } = req.body; // weekly, monthly, annual
   const selectedYear = year || new Date().getFullYear();
