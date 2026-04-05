@@ -682,7 +682,7 @@ app.post("/api/ai/verify-rc", authenticateToken, async (req: any, res) => {
     res.json(data);
   } catch (error: any) {
     console.error("AI Error:", error);
-    res.status(500).json({ error: "Failed to verify RC number" });
+    res.status(500).json({ error: error.message || "Failed to verify RC number" });
   }
 });
 
@@ -758,7 +758,7 @@ app.post("/api/ai/generate-tax-estimate", authenticateToken, async (req: any, re
     res.json({ estimate: result.text });
   } catch (error: any) {
     console.error("AI Error:", error);
-    res.status(500).json({ error: "Failed to generate estimate" });
+    res.status(500).json({ error: error.message || "Failed to generate estimate" });
   }
 });
 
@@ -800,7 +800,7 @@ app.post("/api/ai/business-insights", authenticateToken, async (req: any, res) =
     res.json({ insights: result.text });
   } catch (error: any) {
     console.error("AI Error:", error);
-    res.status(500).json({ error: "Failed to generate insights" });
+    res.status(500).json({ error: error.message || "Failed to generate insights" });
   }
 });
 
