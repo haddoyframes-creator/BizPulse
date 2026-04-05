@@ -17,13 +17,8 @@ export default defineConfig(({mode}) => {
     },
     build: {
       minify: false,
-      rollupOptions: {
-        output: {
-          manualChunks: {
-            vendor: ['react', 'react-dom', 'recharts', 'firebase', '@google/genai', 'lucide-react', 'motion'],
-          }
-        }
-      }
+      sourcemap: false,
+      cssCodeSplit: false,
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.

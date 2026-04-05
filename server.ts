@@ -1,8 +1,8 @@
 import "dotenv/config";
 console.log("Server starting...");
 import express from "express";
+import cors from "cors";
 import { createServer as createViteServer } from "vite";
-import { createClient } from "@supabase/supabase-js";
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
@@ -13,18 +13,7 @@ import bcrypt from "bcryptjs";
 
 const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key-change-in-production";
 
-// Initialize Supabase
-const supabaseUrl = process.env.SUPABASE_URL || "";
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || "";
-// Supabase is temporarily disabled to focus on local stability
-const isSupabaseConfigured = false; // Set to true and provide keys to re-enable
-const supabase = isSupabaseConfigured ? createClient(supabaseUrl, supabaseAnonKey) : null;
-
-if (supabase) {
-  console.log("Supabase client initialized");
-} else {
-  console.log("Using local SQLite database");
-}
+console.log("Using local SQLite database");
 
 // Keep SQLite as a fallback or for local dev if keys are missing
 const db = new Database("bizpulse.db");
@@ -169,6 +158,7 @@ try {
 } catch (e) {}
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 
 // Auth Middleware
@@ -311,7 +301,7 @@ app.get("/api/health", (req, res) => {
   res.json({ 
     status: "ok", 
     timestamp: new Date().toISOString(),
-    database: supabase ? "supabase" : "sqlite"
+    database: "sqlite"
   });
 });
 
@@ -381,15 +371,6 @@ app.get("/api/download-source", async (req, res) => {
 app.get("/api/business", authenticateToken, async (req: any, res) => {
   const userId = req.user.id;
   try {
-    if (supabase) {
-      const { data, error } = await supabase.from('business_info').select('*').eq('user_id', userId).single();
-      if (!error && data) {
-        return res.json(data);
-      }
-      if (error && error.code !== 'PGRST116') {
-        console.error("Supabase Business Error:", JSON.stringify(error));
-      }
-    }
     const info = db.prepare("SELECT * FROM business_info WHERE user_id = ?").get(userId);
     res.json(info || { user_id: userId, name: 'My Business', logo_url: null, is_subscribed: 0 });
   } catch (err: any) {
@@ -402,34 +383,6 @@ app.post("/api/business", authenticateToken, async (req: any, res) => {
   const userId = req.user.id;
   const { name, is_subscribed } = req.body;
   
-  try {
-    if (supabase) {
-      const updates: any = {};
-      if (name !== undefined) updates.name = name;
-      if (is_subscribed !== undefined) updates.is_subscribed = is_subscribed ? 1 : 0;
-      
-      // Check if exists
-      const { data: existing, error: checkError } = await supabase.from('business_info').select('id').eq('user_id', userId).single();
-      
-      if (!checkError || checkError.code === 'PGRST116') {
-        if (existing) {
-          const { error: updateError } = await supabase.from('business_info').update(updates).eq('user_id', userId);
-          if (!updateError) return res.json({ success: true });
-          console.error("Supabase Business Update Error:", JSON.stringify(updateError));
-        } else {
-          const { error: insertError } = await supabase.from('business_info').insert([{ user_id: userId, ...updates }]);
-          if (!insertError) return res.json({ success: true });
-          console.error("Supabase Business Insert Error:", JSON.stringify(insertError));
-        }
-      } else {
-        console.error("Supabase Business Check Error:", JSON.stringify(checkError));
-      }
-    }
-  } catch (err) {
-    console.error("Supabase Business Post Exception:", err);
-  }
-
-  // Fallback to SQLite
   const existing = db.prepare("SELECT id FROM business_info WHERE user_id = ?").get(userId);
   if (existing) {
     if (name !== undefined) {
@@ -452,35 +405,6 @@ app.post("/api/business/logo", authenticateToken, upload.single("logo"), async (
   const userId = req.user.id;
   if (req.file) {
     try {
-      // If Supabase is configured, upload there
-      if (supabase) {
-        const file = req.file;
-        const fileExt = path.extname(file.originalname);
-        const fileName = `${Date.now()}${fileExt}`;
-        const filePath = `logos/${fileName}`;
-
-        const { data, error } = await supabase.storage
-          .from('bizpulse-assets')
-          .upload(filePath, fs.readFileSync(file.path), {
-            contentType: file.mimetype,
-            upsert: true
-          });
-
-        if (error) throw error;
-
-        const { data: { publicUrl } } = supabase.storage
-          .from('bizpulse-assets')
-          .getPublicUrl(filePath);
-
-        db.prepare("UPDATE business_info SET logo_url = ? WHERE user_id = ?").run(publicUrl, userId);
-        
-        // Clean up local file
-        fs.unlinkSync(file.path);
-        
-        return res.json({ logoUrl: publicUrl });
-      }
-
-      // Fallback to local
       const logoUrl = `/uploads/${req.file.filename}`;
       db.prepare("UPDATE business_info SET logo_url = ? WHERE user_id = ?").run(logoUrl, userId);
       res.json({ logoUrl });
@@ -505,15 +429,6 @@ app.post("/api/upload", authenticateToken, upload.single("photo"), async (req: a
 app.get("/api/inventory", authenticateToken, async (req: any, res) => {
   const userId = req.user.id;
   try {
-    if (supabase) {
-      const { data, error } = await supabase.from('inventory').select('*').eq('user_id', userId);
-      if (!error && data) {
-        return res.json(data);
-      }
-      if (error) {
-        console.error("Supabase Inventory Error:", JSON.stringify(error));
-      }
-    }
     const items = db.prepare("SELECT * FROM inventory WHERE user_id = ?").all(userId);
     res.json(items);
   } catch (err: any) {
@@ -533,54 +448,7 @@ app.post("/api/inventory", authenticateToken, upload.single("photo"), async (req
 
     let photoUrl = null;
     if (req.file) {
-      if (supabase) {
-        try {
-          const file = req.file;
-          const fileExt = path.extname(file.originalname);
-          const fileName = `${Date.now()}${fileExt}`;
-          const filePath = `inventory/${fileName}`;
-
-          const { data, error } = await supabase.storage
-            .from('bizpulse-assets')
-            .upload(filePath, fs.readFileSync(file.path), {
-              contentType: file.mimetype,
-              upsert: true
-            });
-
-          if (error) throw error;
-
-          const { data: { publicUrl } } = supabase.storage
-            .from('bizpulse-assets')
-            .getPublicUrl(filePath);
-          
-          photoUrl = publicUrl;
-          fs.unlinkSync(file.path);
-        } catch (uploadErr) {
-          console.error("Supabase Upload Error:", uploadErr);
-          // Fallback to local if upload fails
-          photoUrl = `/uploads/${req.file.filename}`;
-        }
-      } else {
-        photoUrl = `/uploads/${req.file.filename}`;
-      }
-    }
-
-    if (supabase) {
-      const { data, error } = await supabase.from('inventory').insert([{
-        user_id: userId, name, description, price: parseFloat(price), stock: parseInt(stock) || 0, photo_url: photoUrl, size, vat_status: vat_status || 'vatable'
-      }]).select();
-      
-      if (error) {
-        console.error("Supabase Inventory Insert Error:", JSON.stringify(error));
-        if (error.code === '42P01' || error.code === '42703') {
-          console.warn(`Supabase ${error.code === '42P01' ? 'table' : 'column'} error. Falling back to SQLite.`);
-        } else {
-          // For other errors, we still try SQLite but log the issue
-          console.error("Unexpected Supabase error, trying SQLite fallback...");
-        }
-      } else if (data && data.length > 0) {
-        return res.json({ id: data[0].id, photoUrl });
-      }
+      photoUrl = `/uploads/${req.file.filename}`;
     }
 
     const result = db.prepare(
@@ -601,15 +469,6 @@ app.post("/api/inventory", authenticateToken, upload.single("photo"), async (req
 app.get("/api/customers", authenticateToken, async (req: any, res) => {
   const userId = req.user.id;
   try {
-    if (supabase) {
-      const { data, error } = await supabase.from('customers').select('*').eq('user_id', userId).order('name', { ascending: true });
-      if (!error && data) {
-        return res.json(data);
-      }
-      if (error) {
-        console.error("Supabase Customers Error:", JSON.stringify(error));
-      }
-    }
     const customers = db.prepare("SELECT * FROM customers WHERE user_id = ? ORDER BY name ASC").all(userId);
     res.json(customers);
   } catch (err: any) {
@@ -624,16 +483,6 @@ app.post("/api/customers", authenticateToken, async (req: any, res) => {
   if (!name) return res.status(400).json({ error: "Name is required" });
   
   try {
-    if (supabase) {
-      const { data, error } = await supabase.from('customers').insert([{ user_id: userId, name, email, phone, address }]).select();
-      if (!error && data && data.length > 0) {
-        return res.json({ id: data[0].id });
-      }
-      if (error) {
-        console.error("Supabase Customers Post Error:", JSON.stringify(error));
-      }
-    }
-
     const result = db.prepare(
       "INSERT INTO customers (user_id, name, email, phone, address) VALUES (?, ?, ?, ?, ?)"
     ).run(userId, name, email, phone, address);
@@ -648,15 +497,6 @@ app.post("/api/customers", authenticateToken, async (req: any, res) => {
 app.get("/api/transactions", authenticateToken, async (req: any, res) => {
   const userId = req.user.id;
   try {
-    if (supabase) {
-      const { data, error } = await supabase.from('transactions').select('*').eq('user_id', userId).order('date', { ascending: false });
-      if (!error && data) {
-        return res.json(data);
-      }
-      if (error) {
-        console.error("Supabase Transactions Error:", JSON.stringify(error));
-      }
-    }
     const transactions = db.prepare("SELECT * FROM transactions WHERE user_id = ? ORDER BY date DESC").all(userId);
     res.json(transactions);
   } catch (err: any) {
@@ -670,28 +510,6 @@ app.post("/api/transactions", authenticateToken, async (req: any, res) => {
   const { type, amount, category, date, product_id, customer_id, quantity, description, item_name, vat_status } = req.body;
   const qty = parseInt(quantity) || 1;
   const transactionDate = date || new Date().toISOString().split('T')[0];
-
-  try {
-    if (supabase) {
-      const { error: insertError } = await supabase.from('transactions').insert([{
-        user_id: userId, type, amount, category, date: transactionDate, product_id, customer_id, quantity: qty, description, item_name, vat_status: vat_status || 'vatable'
-      }]);
-      
-      if (!insertError) {
-        if (product_id) {
-          const stockChange = type === 'sale' ? -qty : qty;
-          const { data: product } = await supabase.from('inventory').select('stock').eq('id', product_id).eq('user_id', userId).single();
-          if (product) {
-            await supabase.from('inventory').update({ stock: product.stock + stockChange }).eq('id', product_id).eq('user_id', userId);
-          }
-        }
-        return res.json({ success: true });
-      }
-      console.error("Supabase Transactions Post Error:", JSON.stringify(insertError));
-    }
-  } catch (err) {
-    console.error("Supabase Transactions Post Exception:", err);
-  }
 
   db.prepare(
     "INSERT INTO transactions (user_id, type, amount, category, date, product_id, customer_id, quantity, description, item_name, vat_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -716,13 +534,6 @@ app.delete("/api/inventory/:id", authenticateToken, async (req: any, res) => {
     return res.status(403).json({ error: "Invalid PIN" });
   }
   
-  try {
-    if (supabase) {
-      const { error } = await supabase.from('inventory').delete().eq('id', id).eq('user_id', userId);
-      if (!error) return res.json({ success: true });
-    }
-  } catch (err) {}
-
   db.prepare("DELETE FROM inventory WHERE id = ? AND user_id = ?").run(id, userId);
   res.json({ success: true });
 });
@@ -736,13 +547,6 @@ app.put("/api/inventory/:id", authenticateToken, upload.single("photo"), async (
     let photoUrl = req.body.photo_url;
     if (req.file) {
       photoUrl = `/uploads/${req.file.filename}`;
-    }
-
-    if (supabase) {
-      const { error } = await supabase.from('inventory').update({
-        name, description, price: parseFloat(price), stock: parseInt(stock), photo_url: photoUrl, size, vat_status: vat_status || 'vatable'
-      }).eq('id', id).eq('user_id', userId);
-      if (!error) return res.json({ success: true });
     }
 
     db.prepare(
@@ -772,17 +576,6 @@ app.delete("/api/transactions/:id", authenticateToken, async (req: any, res) => 
     if (transaction && transaction.product_id) {
       const stockRevert = transaction.type === 'sale' ? transaction.quantity : -transaction.quantity;
       db.prepare("UPDATE inventory SET stock = stock + ? WHERE id = ? AND user_id = ?").run(stockRevert, transaction.product_id, userId);
-      
-      if (supabase) {
-        const { data: product } = await supabase.from('inventory').select('stock').eq('id', transaction.product_id).single();
-        if (product) {
-          await supabase.from('inventory').update({ stock: product.stock + stockRevert }).eq('id', transaction.product_id);
-        }
-      }
-    }
-
-    if (supabase) {
-      await supabase.from('transactions').delete().eq('id', id).eq('user_id', userId);
     }
 
     db.prepare("DELETE FROM transactions WHERE id = ? AND user_id = ?").run(id, userId);
@@ -812,12 +605,6 @@ app.put("/api/transactions/:id", authenticateToken, async (req: any, res) => {
       db.prepare("UPDATE inventory SET stock = stock + ? WHERE id = ? AND user_id = ?").run(change, product_id, userId);
     }
 
-    if (supabase) {
-      await supabase.from('transactions').update({
-        type, amount, category, date, product_id, customer_id, quantity: qty, description, item_name, vat_status: vat_status || 'vatable'
-      }).eq('id', id).eq('user_id', userId);
-    }
-
     db.prepare(
       "UPDATE transactions SET type = ?, amount = ?, category = ?, date = ?, product_id = ?, customer_id = ?, quantity = ?, description = ?, item_name = ?, vat_status = ? WHERE id = ? AND user_id = ?"
     ).run(type, amount, category, date, product_id, customer_id, qty, description, item_name, vat_status || 'vatable', id, userId);
@@ -831,23 +618,6 @@ app.put("/api/transactions/:id", authenticateToken, async (req: any, res) => {
 app.get("/api/stats", authenticateToken, async (req: any, res) => {
   const userId = req.user.id;
   try {
-    if (supabase) {
-      const { data, error } = await supabase.from('transactions').select('type, amount, date').eq('user_id', userId);
-      if (!error && data) {
-        const grouped = data.reduce((acc: any, curr: any) => {
-          if (!acc[curr.date]) acc[curr.date] = { total_sales: 0, total_expenses: 0, date: curr.date };
-          if (curr.type === 'sale') acc[curr.date].total_sales += curr.amount;
-          else acc[curr.date].total_expenses += curr.amount;
-          return acc;
-        }, {});
-        
-        return res.json(Object.values(grouped).sort((a: any, b: any) => a.date.localeCompare(b.date)));
-      }
-      if (error) {
-        console.error("Supabase Stats Error:", JSON.stringify(error));
-      }
-    }
-  
     const stats = db.prepare(`
       SELECT 
         SUM(CASE WHEN type = 'sale' THEN amount ELSE 0 END) as total_sales,

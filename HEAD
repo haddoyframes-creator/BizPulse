@@ -1,0 +1,10 @@
+0000000000000000000000000000000000000000 ed01ec6247cf895cfa740ec480ccb10c2e287608 AI Studio Assistant <haddoyframes@gmail.com> 1774825736 +0000	commit (initial): Initial commit of BizPulse from AI Studio
+ed01ec6247cf895cfa740ec480ccb10c2e287608 0000000000000000000000000000000000000000 AI Studio Assistant <haddoyframes@gmail.com> 1774825736 +0000	Branch: renamed refs/heads/master to refs/heads/main
+0000000000000000000000000000000000000000 ed01ec6247cf895cfa740ec480ccb10c2e287608 AI Studio Assistant <haddoyframes@gmail.com> 1774825736 +0000	Branch: renamed refs/heads/master to refs/heads/main
+ed01ec6247cf895cfa740ec480ccb10c2e287608 aa3edb4ecc1ed9f02c6be569df9245078773c576 AI Studio Assistant <haddoyframes@gmail.com> 1774830348 +0000	commit: Move Gemini API calls to backend to hide API key
+aa3edb4ecc1ed9f02c6be569df9245078773c576 376f771aa4b76f4525fb4211d99a840a69f8817a AI Studio Assistant <haddoyframes@gmail.com> 1774831564 +0000	commit: Move Gemini API calls to backend to hide API key
+376f771aa4b76f4525fb4211d99a840a69f8817a 1b7404942701a63c44fd5c6dd38bbd636f6d9852 AI Studio Assistant <haddoyframes@gmail.com> 1774831961 +0000	commit: Fix React 19 peer dependency conflicts for Render deployment
+1b7404942701a63c44fd5c6dd38bbd636f6d9852 1bb1b92d93e6983661c6dc7d78bd1ad9b5410fd9 AI Studio Assistant <haddoyframes@gmail.com> 1774836383 +0000	commit: Fix syntax error in App.tsx
+1bb1b92d93e6983661c6dc7d78bd1ad9b5410fd9 9d6de50fad28e700839a7365f124af45ac22ecaa AI Studio Assistant <haddoyframes@gmail.com> 1774836804 +0000	commit: Fix Render build issues (legacy-peer-deps and tsx start script)
+9d6de50fad28e700839a7365f124af45ac22ecaa b9a8105ec7cd3cc503d24a5ebda3434503860f23 AI Studio Assistant <haddoyframes@gmail.com> 1774837189 +0000	commit: Fix Render OOM build crash by disabling minification and splitting chunks
+b9a8105ec7cd3cc503d24a5ebda3434503860f23 01839758ec70ce3706d3329b0d75fccd75e3a3e9 AI Studio Assistant <haddoyframes@gmail.com> 1774837776 +0000	commit: Fix Render OOM by limiting Node memory to 400MB
