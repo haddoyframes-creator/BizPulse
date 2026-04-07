@@ -32,7 +32,7 @@ service cloud.firestore {
     // ===============================================================
     function isValidUser() {
       let data = request.resource.data;
-      return hasOnlyAllowedFields(['email', 'hasPin', 'pin', 'subscription_tier', 'subscription_status', 'role', 'unlocked_cac_years', 'created_at']) &&
+      return hasOnlyAllowedFields(['email', 'hasPin', 'pin', 'subscription_tier', 'subscription_status', 'role', 'unlocked_cac_years', 'unlocked_tax_years', 'created_at']) &&
              data.email is string && isValidEmail(data.email) &&
              (!('hasPin' in data) || data.hasPin is bool) &&
              (!('pin' in data) || (data.pin is string && data.pin.size() >= 4 && data.pin.size() <= 6)) &&
@@ -40,6 +40,7 @@ service cloud.firestore {
              data.subscription_status in ['active', 'expired', 'pending'] &&
              (!('role' in data) || data.role in ['admin', 'user']) &&
              (!('unlocked_cac_years' in data) || data.unlocked_cac_years is list) &&
+             (!('unlocked_tax_years' in data) || data.unlocked_tax_years is list) &&
              (!('created_at' in data) || data.created_at == null || (data.created_at is string && data.created_at.size() < 50));
     }
 
@@ -95,9 +96,32 @@ service cloud.firestore {
              (!('id' in data) || data.id == null || (data.id is string && data.id.size() < 100));
     }
 
+    function isValidVerifiedBusiness() {
+      let data = request.resource.data;
+      return hasOnlyAllowedFields(['name', 'registration_number', 'business_type', 'address', 'registration_date', 'source', 'verification_status', 'tax_id', 'last_annual_return_year', 'compliance_status', 'updated_at']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.registration_number is string && data.registration_number.size() > 0 && data.registration_number.size() < 50 &&
+             data.business_type in ['Business Name', 'LTD', 'LLP', 'NGO'] &&
+             (!('address' in data) || data.address is string && data.address.size() < 1000) &&
+             (!('registration_date' in data) || data.registration_date is string && data.registration_date.size() < 50) &&
+             data.source in ['manual', 'directory', 'verified', 'user submitted'] &&
+             data.verification_status in ['unverified', 'pending', 'verified'] &&
+             (!('tax_id' in data) || data.tax_id is string && data.tax_id.size() < 50) &&
+             (!('last_annual_return_year' in data) || data.last_annual_return_year is number) &&
+             (!('compliance_status' in data) || data.compliance_status in ['compliant', 'non-compliant', 'unknown']) &&
+             data.updated_at is string && data.updated_at.size() < 50;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
+    match /businesses/{registrationNumber} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
       allow create: if (isOwner(userId) && isValidUser() && (!('role' in request.resource.data) || request.resource.data.role == 'user')) || isAdmin();

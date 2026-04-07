@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "start": "tsx server.ts"
+    "start": "NODE_ENV=production tsx server.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -25,6 +25,7 @@
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "firebase": "^12.10.0",
+    "firebase-admin": "^13.7.0",
     "html2canvas": "^1.4.1",
     "html2pdf.js": "^0.14.0",
     "jsonwebtoken": "^9.0.3",

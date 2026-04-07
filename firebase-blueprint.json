@@ -8,7 +8,9 @@
         "email": { "type": "string", "format": "email" },
         "hasPin": { "type": "boolean" },
         "subscription_tier": { "type": "string", "enum": ["free", "basic", "pro"] },
-        "subscription_status": { "type": "string", "enum": ["active", "expired", "pending"] }
+        "subscription_status": { "type": "string", "enum": ["active", "expired", "pending"] },
+        "unlocked_cac_years": { "type": "array", "items": { "type": "number" } },
+        "unlocked_tax_years": { "type": "array", "items": { "type": "number" } }
       },
       "required": ["email", "subscription_tier", "subscription_status"]
     },
@@ -19,8 +21,10 @@
       "properties": {
         "name": { "type": "string" },
         "logo_url": { "type": "string" },
+        "rc_number": { "type": "string" },
         "is_subscribed": { "type": "number" },
-        "payment_gateway": { "type": "string", "enum": ["paystack", "monnify"] }
+        "payment_gateway": { "type": "string", "enum": ["paystack", "monnify"] },
+        "monnify_test_mode": { "type": "boolean" }
       },
       "required": ["name"]
     },
@@ -69,6 +73,25 @@
         "created_at": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "created_at"]
+    },
+    "VerifiedBusiness": {
+      "title": "VerifiedBusiness",
+      "description": "Registered business in the BizPulse dataset",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "registration_number": { "type": "string" },
+        "business_type": { "type": "string", "enum": ["Business Name", "LTD", "LLP", "NGO"] },
+        "address": { "type": "string" },
+        "registration_date": { "type": "string", "format": "date" },
+        "source": { "type": "string", "enum": ["manual", "directory", "verified", "user submitted"] },
+        "verification_status": { "type": "string", "enum": ["unverified", "pending", "verified"] },
+        "tax_id": { "type": "string" },
+        "last_annual_return_year": { "type": "number" },
+        "compliance_status": { "type": "string", "enum": ["compliant", "non-compliant", "unknown"] },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "registration_number", "business_type", "source", "verification_status", "updated_at"]
     }
   },
   "firestore": {
@@ -91,6 +114,10 @@
     "/users/{userId}/customers/{customerId}": {
       "schema": { "$ref": "#/entities/Customer" },
       "description": "Customers belonging to the user."
+    },
+    "/businesses/{registrationNumber}": {
+      "schema": { "$ref": "#/entities/VerifiedBusiness" },
+      "description": "Global dataset of registered businesses."
     }
   }
 }

@@ -1,5 +1,5 @@
 import "dotenv/config";
-console.log("Server starting...");
+console.log(`Server starting in ${process.env.NODE_ENV || 'development'} mode...`);
 import express from "express";
 import cors from "cors";
 import { createServer as createViteServer } from "vite";
@@ -10,8 +10,33 @@ import multer from "multer";
 import { GoogleGenAI } from "@google/genai";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
+import admin from "firebase-admin";
 
 const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key-change-in-production";
+
+// Initialize Firebase Admin
+try {
+  const serviceAccountPath = path.resolve("firebase-applet-config.json");
+  if (fs.existsSync(serviceAccountPath)) {
+    const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf-8"));
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+    console.log("Firebase Admin initialized successfully.");
+  } else {
+    console.warn("firebase-applet-config.json not found. Firebase Admin not initialized.");
+  }
+} catch (e) {
+  console.error("Failed to initialize Firebase Admin:", e);
+}
+
+const getFirestore = () => {
+  try {
+    return admin.firestore();
+  } catch (e) {
+    return null;
+  }
+};
 
 console.log("Using local SQLite database");
 
@@ -804,6 +829,170 @@ app.post("/api/ai/business-insights", authenticateToken, async (req: any, res) =
   }
 });
 
+// ===============================================================
+// NEW BACKEND BUSINESS ENDPOINTS
+// ===============================================================
+
+// Helper for Mock External Directory Lookup
+async function fetchFromExternalDirectory(rcNumber: string) {
+  // Simulate network delay
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  
+  // Mock data for demonstration purposes
+  const mockDatabase: Record<string, any> = {
+    "1234567": {
+      name: "DANGOTE CEMENT PLC",
+      address: "1 ALFRED REWANE ROAD, IKOYI, LAGOS",
+      activity: "MANUFACTURING"
+    },
+    "7654321": {
+      name: "FLUTTERWAVE TECHNOLOGY SOLUTIONS LIMITED",
+      address: "8 PROVIDENCE STREET, LEKKI PHASE 1, LAGOS",
+      activity: "INFORMATION TECHNOLOGY"
+    },
+    "1111111": {
+      name: "ZENITH BANK PLC",
+      address: "PLOT 84, AJOSE ADEOGUN STREET, VICTORIA ISLAND, LAGOS",
+      activity: "FINANCIAL SERVICES"
+    }
+  };
+
+  const data = mockDatabase[rcNumber];
+  
+  if (data) {
+    return data;
+  }
+  
+  return { name: "NOT_FOUND" };
+}
+
+app.post("/api/business/manual-entry", authenticateToken, async (req: any, res) => {
+  const { name, registration_number, business_type, address, registration_date } = req.body;
+  if (!name || !registration_number) return res.status(400).json({ error: "Name and Registration Number are required" });
+
+  const db = getFirestore();
+  if (!db) return res.status(503).json({ error: "Database not available" });
+
+  try {
+    const docRef = db.collection('businesses').doc(registration_number);
+    const doc = await docRef.get();
+
+    if (doc.exists) {
+      return res.status(409).json({ error: "Business already exists in our records" });
+    }
+
+    const businessData = {
+      name,
+      registration_number,
+      business_type: business_type || 'Business Name',
+      address: address || '',
+      registration_date: registration_date || '',
+      source: 'user submitted',
+      verification_status: 'unverified',
+      updated_at: new Date().toISOString()
+    };
+
+    await docRef.set(businessData);
+    res.json({ success: true, business: businessData });
+  } catch (err: any) {
+    console.error("Manual Entry Error:", err);
+    res.status(500).json({ error: "Failed to save business", message: err.message });
+  }
+});
+
+app.post("/api/business/lookup", authenticateToken, async (req: any, res) => {
+  const { registration_number } = req.body;
+  if (!registration_number) return res.status(400).json({ error: "Registration Number is required" });
+
+  const db = getFirestore();
+  if (!db) return res.status(503).json({ error: "Database not available" });
+
+  try {
+    const docRef = db.collection('businesses').doc(registration_number);
+    const doc = await docRef.get();
+
+    if (doc.exists) {
+      return res.json({ source: 'internal', business: doc.data() });
+    }
+
+    // Not found in internal DB, use external directory lookup
+    try {
+      const externalData = await fetchFromExternalDirectory(registration_number);
+      
+      if (externalData && externalData.name !== "NOT_FOUND") {
+        const businessData = {
+          name: externalData.name,
+          registration_number,
+          business_type: 'LTD', // Defaulting to LTD for RC numbers, or we could try to guess
+          address: externalData.address || '',
+          registration_date: '',
+          source: 'directory',
+          verification_status: 'unverified',
+          updated_at: new Date().toISOString()
+        };
+        
+        await docRef.set(businessData);
+        return res.json({ source: 'external', business: businessData });
+      }
+      
+      res.status(404).json({ error: "Business not found in external directories" });
+    } catch (extErr: any) {
+      console.error("External Lookup Error:", extErr);
+      res.status(500).json({ error: "External lookup failed", message: extErr.message });
+    }
+  } catch (err: any) {
+    console.error("Internal Lookup Error:", err);
+    res.status(500).json({ error: "Lookup failed", message: err.message });
+  }
+});
+
+app.get("/api/business/details/:registration_number", authenticateToken, async (req: any, res) => {
+  const { registration_number } = req.params;
+  
+  const db = getFirestore();
+  if (!db) return res.status(503).json({ error: "Database not available" });
+
+  try {
+    const doc = await db.collection('businesses').doc(registration_number).get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Business not found" });
+    }
+    res.json(doc.data());
+  } catch (err: any) {
+    console.error("Fetch Details Error:", err);
+    res.status(500).json({ error: "Failed to fetch business details", message: err.message });
+  }
+});
+
+app.patch("/api/business/verify", authenticateToken, async (req: any, res) => {
+  const { registration_number, verification_proof } = req.body;
+  if (!registration_number) return res.status(400).json({ error: "Registration Number is required" });
+
+  const db = getFirestore();
+  if (!db) return res.status(503).json({ error: "Database not available" });
+
+  try {
+    const docRef = db.collection('businesses').doc(registration_number);
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Business not found" });
+    }
+
+    await docRef.update({
+      verification_status: 'verified',
+      source: 'verified',
+      updated_at: new Date().toISOString(),
+      verification_proof: verification_proof || 'User confirmed'
+    });
+
+    res.json({ success: true, message: "Business verified successfully" });
+  } catch (err: any) {
+    console.error("Verification Error:", err);
+    res.status(500).json({ error: "Verification failed", message: err.message });
+  }
+});
+
 app.post("/api/advice", authenticateToken, async (req: any, res) => {
   const { period, year, transactions, inventory } = req.body; // weekly, monthly, annual
   const selectedYear = year || new Date().getFullYear();
@@ -918,7 +1107,7 @@ app.post("/api/tax-estimate", authenticateToken, async (req: any, res) => {
 
 
 async function startServer() {
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   
   try {
     if (process.env.NODE_ENV !== "production") {
