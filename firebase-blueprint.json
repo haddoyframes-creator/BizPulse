@@ -21,12 +21,17 @@
       "properties": {
         "name": { "type": "string" },
         "logo_url": { "type": "string" },
+        "user_photo_url": { "type": "string" },
+        "phone_number": { "type": "string" },
+        "email_address": { "type": "string" },
+        "address": { "type": "string" },
+        "nature_of_business": { "type": "string" },
         "rc_number": { "type": "string" },
         "is_subscribed": { "type": "number" },
         "payment_gateway": { "type": "string", "enum": ["paystack", "monnify"] },
         "monnify_test_mode": { "type": "boolean" }
       },
-      "required": ["name"]
+      "required": ["name", "phone_number"]
     },
     "InventoryItem": {
       "title": "InventoryItem",

@@ -6,3 +6,18 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Database and Uploads
+*.db
+*.db-journal
+uploads/
+
+# Build artifacts
+app.js
+
+# Firebase Config (Sensitive)
+firebase-applet-config.json
+
+# Temporary/Test files
+*.zip
+test-*.ts

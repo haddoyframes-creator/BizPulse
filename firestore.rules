@@ -46,9 +46,14 @@ service cloud.firestore {
 
     function isValidBusinessInfo() {
       let data = request.resource.data;
-      return hasOnlyAllowedFields(['name', 'logo_url', 'is_subscribed', 'rc_number', 'id', 'payment_gateway', 'monnify_test_mode']) &&
+      return hasOnlyAllowedFields(['name', 'logo_url', 'user_photo_url', 'phone_number', 'email_address', 'address', 'nature_of_business', 'is_subscribed', 'rc_number', 'id', 'payment_gateway', 'monnify_test_mode']) &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.phone_number is string && data.phone_number.size() > 0 && data.phone_number.size() < 50 &&
              (!('logo_url' in data) || data.logo_url == null || (data.logo_url is string && data.logo_url.size() < 1000000)) &&
+             (!('user_photo_url' in data) || data.user_photo_url == null || (data.user_photo_url is string && data.user_photo_url.size() < 1000000)) &&
+             (!('email_address' in data) || data.email_address == null || (data.email_address is string && data.email_address.size() < 100)) &&
+             (!('address' in data) || data.address == null || (data.address is string && data.address.size() < 500)) &&
+             (!('nature_of_business' in data) || data.nature_of_business == null || (data.nature_of_business is string && data.nature_of_business.size() < 1000)) &&
              (!('is_subscribed' in data) || data.is_subscribed == null || data.is_subscribed is number) &&
              (!('rc_number' in data) || data.rc_number == null || (data.rc_number is string && data.rc_number.size() < 50)) &&
              (!('payment_gateway' in data) || data.payment_gateway == null || data.payment_gateway in ['paystack', 'monnify']) &&

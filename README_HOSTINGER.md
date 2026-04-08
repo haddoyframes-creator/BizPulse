@@ -18,11 +18,11 @@ This guide will help you deploy the BizPulse applet to Hostinger's Node.js envir
 3.  **Install Dependencies**:
     -   Run `npm install` in the terminal (or via the Hostinger dashboard).
 4.  **Build the App**:
-    -   Run `npm run build`. This will generate the `dist` folder containing the compiled React app.
+    -   Run `npm run build`. This will generate the `dist` folder for the frontend and compile `server.ts` into `app.js` for the backend.
 5.  **Start the Server**:
-    -   The entry point should be `server.ts`.
-    -   The `start` script is configured as `NODE_ENV=production tsx server.ts`.
-    -   If your Hostinger environment doesn't allow setting the start script via the dashboard, you can run `npm start` from the terminal.
+    -   Hostinger will automatically look for `app.js` as the entry point, which is now generated during the build step.
+    -   The `start` script is configured as `NODE_ENV=production node app.js`.
+    -   If your Hostinger environment requires you to specify the startup file, set it to `app.js`.
 
 ## Database & Native Modules
 - This app uses **SQLite** (`better-sqlite3`).
