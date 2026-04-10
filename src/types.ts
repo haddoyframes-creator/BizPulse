@@ -2,6 +2,11 @@ export interface BusinessInfo {
   id: string;
   name: string;
   logo_url: string | null;
+  user_photo_url?: string | null;
+  phone_number?: string;
+  email_address?: string;
+  address?: string;
+  nature_of_business?: string;
   is_subscribed: number;
   rc_number?: string;
   payment_gateway?: 'paystack' | 'monnify';

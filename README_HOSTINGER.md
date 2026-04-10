@@ -24,10 +24,10 @@ This guide will help you deploy the BizPulse applet to Hostinger's Node.js envir
     -   The `start` script is configured as `NODE_ENV=production node app.js`.
     -   If your Hostinger environment requires you to specify the startup file, set it to `app.js`.
 
-## Database & Native Modules
-- This app uses **SQLite** (`better-sqlite3`).
-- **IMPORTANT**: `better-sqlite3` is a native module. If Hostinger's environment doesn't have prebuilt binaries for your OS, it will try to compile it. This requires `node-gyp` and build tools (like `gcc`, `make`).
-- If you encounter issues with `better-sqlite3`, ensure your Hostinger Node.js version matches one of the prebuilt binary versions (usually the latest LTS).
+## Database
+- This app uses **Firebase Firestore** as its primary database.
+- Ensure you have uploaded your `firebase-applet-config.json` to the server root.
+- The SQLite fallback has been removed to ensure compatibility with Hostinger's environment.
 
 ## Troubleshooting
 - If you see "Vite not found" errors, ensure you've run `npm install`.

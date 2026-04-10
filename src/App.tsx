@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 console.log("App component loading...");
-import { GoogleGenAI, Type } from "@google/genai";
 import html2pdf from 'html2pdf.js';
 import { 
   LayoutDashboard, 
@@ -26,6 +25,7 @@ import {
   Cloud,
   CloudOff,
   Users,
+  User as UserIcon,
   Phone,
   Mail,
   MapPin,
@@ -325,6 +325,165 @@ export const apiFetch = async (url: string, options: RequestInit = {}) => {
             return new Response(JSON.stringify({ error: 'Invalid code' }), { status: 400 });
           }
         }
+      } else if (path.startsWith('/api/ai/')) {
+        const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+        if (!apiKey) {
+          return new Response(JSON.stringify({ error: "Gemini API key is missing or invalid. Please add VITE_GEMINI_API_KEY to your environment variables." }), { status: 400 });
+        }
+        
+        const callGemini = async (prompt: string, useSearch: boolean = false) => {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+          const payload: any = {
+            contents: [{ parts: [{ text: prompt }] }]
+          };
+          
+          if (useSearch) {
+            payload.tools = [{ googleSearch: {} }];
+          }
+          
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error?.message || `Gemini API Error: ${res.status}`);
+          }
+          
+          const data = await res.json();
+          return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        };
+
+        if (path === '/api/ai/verify-rc') {
+          const { rcNumber } = JSON.parse(options.body as string);
+          try {
+            const prompt = `You are a corporate registry assistant. Your task is to find the exact company details for a Nigerian company registered with the Corporate Affairs Commission (CAC) using its RC number (Registration Number).
+              The RC number to search for is: ${rcNumber}.
+              Use Google Search to find the official company name, registered address, and primary business activity. Search specifically for "RC ${rcNumber} Nigeria" or look up CAC directories.
+              It is CRITICAL that you return the exact company name associated with this specific RC number. Do not guess or return a similar company. If you are not 100% sure, return "NOT_FOUND" for the name.
+              Return ONLY a raw JSON object with the following keys:
+              - "name": The full official registered company name (or "NOT_FOUND" if you cannot find a definitive match for this exact RC number)
+              - "address": The registered office address (or empty string if not found)
+              - "activity": The primary nature of business or activity (or empty string if not found)
+              Do not include any markdown formatting or backticks.`;
+              
+            const text = await callGemini(prompt, true);
+
+            let data;
+            try {
+              const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+              data = JSON.parse(cleanText);
+            } catch (e) {
+              const nameMatch = text.match(/"name"\s*:\s*"([^"]+)"/);
+              const addressMatch = text.match(/"address"\s*:\s*"([^"]+)"/);
+              const activityMatch = text.match(/"activity"\s*:\s*"([^"]+)"/);
+              
+              data = {
+                name: nameMatch ? nameMatch[1] : "NOT_FOUND",
+                address: addressMatch ? addressMatch[1] : "",
+                activity: activityMatch ? activityMatch[1] : ""
+              };
+            }
+            return new Response(JSON.stringify(data));
+          } catch (error: any) {
+            console.error("AI Error:", error);
+            return new Response(JSON.stringify({ error: error.message || "Failed to verify RC number" }), { status: 500 });
+          }
+        } else if (path === '/api/ai/generate-tax-estimate') {
+          const { taxType, year, businessType, annualTurnover, annualProfit, monthlySales, employees, avgSalary, state } = JSON.parse(options.body as string);
+          
+          let reportFocus = "";
+          if (taxType === 'cit') {
+            reportFocus = `
+            Provide:
+            1. Estimated Company Income Tax (CIT) according to the Nigerian tax law for ${year} (e.g., 0% for small companies < ₦25m, 20% for medium ₦25m-₦100m, 30% for large > ₦100m).
+            2. Estimated Education Tax (Tertiary Education Trust Fund - TETFund) at 3% of assessable profit (if applicable for ${year}).
+            3. Relevant tax incentives or exemptions applicable in ${year}.
+            4. A formal report summary suitable for submission to the Federal Inland Revenue Service (FIRS) for the ${year} assessment year.
+            `;
+          } else if (taxType === 'vat') {
+            reportFocus = `
+            Provide:
+            1. A detailed monthly breakdown of Value Added Tax (VAT) at 7.5% for products that are VATable for every month based on the monthly sales provided.
+            2. Brief explanation of VAT filing obligations and deadlines for that period.
+            3. A formal VAT report summary suitable for submission to the Federal Inland Revenue Service (FIRS).
+            `;
+          } else if (taxType === 'paye') {
+            reportFocus = `
+            Provide:
+            1. Estimated Pay As You Earn (PAYE) tax for the ${employees} employees based on the average monthly salary of ₦${avgSalary}.
+            2. Breakdown of the Consolidated Relief Allowance (CRA) and the specific tax brackets (7%, 11%, 15%, 19%, 21%, 24%) applied to the taxable income.
+            3. Estimated monthly and annual PAYE remittance to the ${state} State Internal Revenue Service.
+            4. Brief explanation of PAYE filing obligations and deadlines.
+            `;
+          } else {
+            reportFocus = `
+            Provide:
+            1. Estimated Company Income Tax (CIT) according to the Nigerian tax law for ${year} (e.g., 0% for small companies < ₦25m, 20% for medium ₦25m-₦100m, 30% for large > ₦100m).
+            2. A detailed monthly breakdown of Value Added Tax (VAT) at 7.5% for products that are VATable for every month based on the monthly sales provided.
+            3. Estimated Education Tax (Tertiary Education Trust Fund - TETFund) at 3% of assessable profit (if applicable for ${year}).
+            4. Estimated Pay As You Earn (PAYE) tax for the ${employees} employees based on the average monthly salary of ₦${avgSalary}, showing the tax brackets applied.
+            5. Relevant tax incentives or exemptions applicable in ${year}.
+            6. A formal report summary suitable for submission to the Federal Inland Revenue Service (FIRS) and ${state} State Internal Revenue Service for the ${year} assessment year.
+            `;
+          }
+          
+          const prompt = `
+            As a Nigerian tax expert, provide an annual tax estimate for the year ${year} for the following business:
+            - Business Type: ${businessType}
+            - Annual Turnover: ₦${annualTurnover}
+            - Annual Net Profit: ₦${annualProfit}
+            - Monthly Sales Data (Array of 12 months, each containing vatable, exempt, and zero_rated sales): ${JSON.stringify(monthlySales)}
+            - Number of Employees: ${employees}
+            - Average Monthly Salary per Employee: ₦${avgSalary}
+            - State of Operation: ${state}
+            
+            IMPORTANT: Base this estimate on the Nigerian tax laws (Finance Acts, CIT, PIT, etc.) as they existed in ${year}.
+            
+            ${reportFocus}
+            
+            Format the response in Markdown.
+          `;
+
+          try {
+            const text = await callGemini(prompt);
+            return new Response(JSON.stringify({ estimate: text }));
+          } catch (error: any) {
+            console.error("AI Error:", error);
+            return new Response(JSON.stringify({ error: error.message || "Failed to generate estimate" }), { status: 500 });
+          }
+        } else if (path === '/api/ai/business-insights') {
+          const { businessName, transactions, customQuestion } = JSON.parse(options.body as string);
+          
+          const totalRevenue = transactions.filter((t: any) => t.type === 'sale').reduce((sum: number, t: any) => sum + t.amount, 0);
+          const totalExpenses = transactions.filter((t: any) => t.type === 'expense').reduce((sum: number, t: any) => sum + t.amount, 0);
+          const netProfit = totalRevenue - totalExpenses;
+
+          const basePrompt = `
+            You are an expert AI Business Advisor for a Nigerian business named "${businessName || 'the business'}".
+            Here is their financial summary:
+            - Total Revenue: ₦${totalRevenue.toLocaleString()}
+            - Total Expenses: ₦${totalExpenses.toLocaleString()}
+            - Net Profit: ₦${netProfit.toLocaleString()}
+            
+            Recent Transactions (up to 20):
+            ${JSON.stringify(transactions)}
+          `;
+
+          const prompt = customQuestion 
+            ? `${basePrompt}\n\nThe user has a specific question: "${customQuestion}"\nProvide a helpful, professional, and actionable response based on their financial data.`
+            : `${basePrompt}\n\nPlease provide 3-5 personalized, actionable business insights or recommendations based on this data. Focus on cash flow, expense reduction, or revenue growth opportunities. Format the response in Markdown.`;
+
+          try {
+            const text = await callGemini(prompt);
+            return new Response(JSON.stringify({ insights: text }));
+          } catch (error: any) {
+            console.error("AI Error:", error);
+            return new Response(JSON.stringify({ error: error.message || "Failed to generate insights" }), { status: 500 });
+          }
+        }
       }
     } catch (e: any) {
       console.error('Firestore intercept error:', e);
@@ -336,7 +495,9 @@ export const apiFetch = async (url: string, options: RequestInit = {}) => {
   }
 
   try {
-    const res = await fetch(url, { ...options, headers });
+    const baseUrl = import.meta.env.VITE_API_URL || '';
+    const fullUrl = url.startsWith('/api') ? `${baseUrl}${url}` : url;
+    const res = await fetch(fullUrl, { ...options, headers });
     if (res.status === 401 || res.status === 403) {
       console.warn(`apiFetch: Auth failed for ${url}`);
       localStorage.removeItem('bizpulse_token');
@@ -865,6 +1026,9 @@ function AdminDashboard({ user }: { user: User | null }) {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [selectedUserBusiness, setSelectedUserBusiness] = useState<BusinessInfo | null>(null);
+  const [isViewingDetails, setIsViewingDetails] = useState(false);
+  const [isFetchingDetails, setIsFetchingDetails] = useState(false);
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -899,6 +1063,25 @@ function AdminDashboard({ user }: { user: User | null }) {
       setUsers(users.map(u => u.id === userId ? { ...u, [field]: value } : u));
     } catch (err: any) {
       alert("Failed to update user: " + err.message);
+    }
+  };
+
+  const viewUserDetails = async (userId: string) => {
+    setIsFetchingDetails(true);
+    setIsViewingDetails(true);
+    try {
+      const docRef = doc(db, 'users', userId, 'business_info', 'info');
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        setSelectedUserBusiness({ id: docSnap.id, ...docSnap.data() } as BusinessInfo);
+      } else {
+        setSelectedUserBusiness(null);
+      }
+    } catch (err) {
+      console.error("Error fetching user business details:", err);
+      alert("Failed to load business details");
+    } finally {
+      setIsFetchingDetails(false);
     }
   };
 
@@ -938,6 +1121,7 @@ function AdminDashboard({ user }: { user: User | null }) {
                 <th className="px-6 py-4">Tier</th>
                 <th className="px-6 py-4">Status</th>
                 <th className="px-6 py-4">Role</th>
+                <th className="px-6 py-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-100">
@@ -981,6 +1165,14 @@ function AdminDashboard({ user }: { user: User | null }) {
                       <option value="admin">Admin</option>
                     </select>
                   </td>
+                  <td className="px-6 py-4 text-right">
+                    <button 
+                      onClick={() => viewUserDetails(u.id)}
+                      className="text-emerald-600 hover:text-emerald-700 font-bold text-xs uppercase tracking-wider"
+                    >
+                      View Profile
+                    </button>
+                  </td>
                 </tr>
               ))}
               {users.length === 0 && (
@@ -992,6 +1184,84 @@ function AdminDashboard({ user }: { user: User | null }) {
           </table>
         </div>
       </div>
+
+      {isViewingDetails && (
+        <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-3xl p-8 max-w-2xl w-full shadow-2xl max-h-[90vh] overflow-y-auto"
+          >
+            <div className="flex justify-between items-center mb-8">
+              <h3 className="text-2xl font-bold">User Business Profile</h3>
+              <button onClick={() => setIsViewingDetails(false)} className="text-stone-400 hover:text-stone-600">
+                <Plus size={24} className="rotate-45" />
+              </button>
+            </div>
+
+            {isFetchingDetails ? (
+              <div className="py-20 flex justify-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600"></div>
+              </div>
+            ) : selectedUserBusiness ? (
+              <div className="space-y-8">
+                <div className="flex items-center gap-6">
+                  <div className="w-24 h-24 bg-stone-100 rounded-3xl overflow-hidden border border-stone-200">
+                    {selectedUserBusiness.logo_url ? (
+                      <img src={selectedUserBusiness.logo_url} alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-stone-300"><Upload size={32} /></div>
+                    )}
+                  </div>
+                  <div className="w-24 h-24 bg-stone-100 rounded-full overflow-hidden border border-stone-200">
+                    {selectedUserBusiness.user_photo_url ? (
+                      <img src={selectedUserBusiness.user_photo_url} alt="User" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-stone-300"><UserIcon size={32} /></div>
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="text-xl font-bold text-stone-900">{selectedUserBusiness.name}</h4>
+                    <p className="text-stone-500">{selectedUserBusiness.phone_number || 'No phone number'}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Email Address</p>
+                    <p className="text-sm font-medium">{selectedUserBusiness.email_address || 'N/A'}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">RC / BN Number</p>
+                    <p className="text-sm font-medium">{selectedUserBusiness.rc_number || 'N/A'}</p>
+                  </div>
+                  <div className="space-y-1 md:col-span-2">
+                    <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Business Address</p>
+                    <p className="text-sm font-medium">{selectedUserBusiness.address || 'N/A'}</p>
+                  </div>
+                  <div className="space-y-1 md:col-span-2">
+                    <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Nature of Business</p>
+                    <p className="text-sm font-medium">{selectedUserBusiness.nature_of_business || 'N/A'}</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="py-20 text-center text-stone-500">
+                <p>No business profile information found for this user.</p>
+              </div>
+            )}
+
+            <div className="mt-8 pt-8 border-t border-stone-100">
+              <button 
+                onClick={() => setIsViewingDetails(false)}
+                className="w-full py-4 bg-stone-900 text-white rounded-2xl font-bold hover:bg-stone-800 transition-all"
+              >
+                Close Details
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2487,7 +2757,8 @@ function CACAnnualReport({ user, transactions, business }: { user: User | null, 
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
-  const [lookupResult, setLookupResult] = useState<{ name: string; address?: string; activity?: string; confirmed: boolean } | null>(null);
+  const [isRegisteringGlobally, setIsRegisteringGlobally] = useState(false);
+  const [lookupResult, setLookupResult] = useState<{ name: string; address?: string; activity?: string; registration_number?: string; business_type?: string; source?: string; verification_status?: string; confirmed: boolean } | null>(null);
   const reportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -2519,28 +2790,37 @@ function CACAnnualReport({ user, transactions, business }: { user: User | null, 
     setLookupError(null);
     setLookupResult(null); // Clear previous result
     try {
-      const response = await fetch('/api/ai/verify-rc', {
+      const response = await apiFetch('/api/business/lookup', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ rcNumber: cleanRC })
+        body: JSON.stringify({ registration_number: cleanRC })
       });
 
       if (!response.ok) {
-        throw new Error('Failed to verify RC number');
+        let errMsg = 'Failed to verify RC number';
+        try {
+          const errData = await response.json();
+          if (errData.error) errMsg = errData.error;
+        } catch (e) {}
+        throw new Error(errMsg);
       }
 
       const data = await response.json();
+      const business = data.business;
 
-      console.log("CAC Lookup result:", data);
+      console.log("Business Lookup result:", data);
 
-      if (data.name && data.name !== "NOT_FOUND" && data.name.length > 3) {
+      if (business && business.name && business.name !== "NOT_FOUND") {
         setLookupResult({ 
-          name: data.name, 
-          address: data.address, 
-          activity: data.activity, 
+          name: business.name, 
+          address: business.address || '', 
+          activity: business.activity || '', 
+          registration_number: business.registration_number,
+          business_type: business.business_type,
+          source: data.source,
+          verification_status: business.verification_status,
           confirmed: false 
         });
       } else {
@@ -2570,6 +2850,20 @@ function CACAnnualReport({ user, transactions, business }: { user: User | null, 
           rc_number: rcNumber 
         }, { merge: true });
         
+        // Also verify in the global dataset
+        try {
+          await apiFetch('/api/business/verify', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              registration_number: rcNumber,
+              verification_proof: 'User confirmed via lookup'
+            })
+          });
+        } catch (verifyErr) {
+          console.error("Error verifying in global dataset:", verifyErr);
+        }
+
         // Automatically populate form fields
         setCompanyName(lookupResult.name);
         if (lookupResult.address) setAddress(lookupResult.address);
@@ -2579,6 +2873,53 @@ function CACAnnualReport({ user, transactions, business }: { user: User | null, 
       } catch (e) {
         console.error("Error updating business name:", e);
       }
+    }
+  };
+
+  const handleRegisterGlobally = async () => {
+    if (!companyName || !rcNumber) {
+      alert("Company Name and RC Number are required for global registration.");
+      return;
+    }
+    
+    setIsRegisteringGlobally(true);
+    try {
+      const response = await apiFetch('/api/business/manual-entry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: companyName,
+          registration_number: rcNumber,
+          business_type: 'Business Name', // Default
+          address: address,
+          registration_date: ''
+        })
+      });
+
+      if (response.ok) {
+        alert("Business successfully registered in the BizPulse Global Dataset!");
+        // Refresh lookup result to show it's now internal
+        setLookupResult({
+          name: companyName,
+          address: address,
+          activity: activity,
+          registration_number: rcNumber,
+          source: 'internal',
+          verification_status: 'unverified',
+          confirmed: true
+        });
+      } else {
+        const data = await response.json();
+        if (data.error === "Business already exists in our records") {
+          alert("This business is already in our global dataset.");
+        } else {
+          throw new Error(data.error || "Failed to register globally");
+        }
+      }
+    } catch (error: any) {
+      alert("Error: " + error.message);
+    } finally {
+      setIsRegisteringGlobally(false);
     }
   };
 
@@ -2768,10 +3109,12 @@ function CACAnnualReport({ user, transactions, business }: { user: User | null, 
         pagebreak:    { mode: ['css', 'legacy'], avoid: ['tr', 'h1', 'h2', 'h3', 'p', 'li', '.avoid-break'] }
       };
 
-      await html2pdf().set(opt).from(reportRef.current).save();
-    } catch (error) {
+      const html2pdfFn = typeof html2pdf === 'function' ? html2pdf : (html2pdf as any).default;
+      await html2pdfFn().set(opt).from(reportRef.current).save();
+    } catch (error: any) {
       console.error('PDF Generation Error:', error);
-      alert('Failed to generate PDF. Please try the Print option instead.');
+      alert(`PDF generation failed (${error?.message || error}). Falling back to Print dialog - please select "Save as PDF" as your printer.`);
+      window.print();
     } finally {
       setIsGeneratingPDF(false);
     }
@@ -2947,23 +3290,6 @@ function CACAnnualReport({ user, transactions, business }: { user: User | null, 
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <label className="text-xs font-bold text-stone-500 uppercase tracking-wider">Company Name</label>
-                  {companyName && companyName !== business?.name && (
-                    <button 
-                      onClick={async () => {
-                        if (user) {
-                          try {
-                            await setDoc(doc(db, 'users', user.id, 'business_info', 'info'), { name: companyName }, { merge: true });
-                            alert("Company name updated in your profile!");
-                          } catch (e) {
-                            console.error("Error updating business name:", e);
-                          }
-                        }
-                      }}
-                      className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider hover:underline"
-                    >
-                      Save to Profile
-                    </button>
-                  )}
                 </div>
                 <div className="relative">
                   <input 
@@ -2988,23 +3314,6 @@ function CACAnnualReport({ user, transactions, business }: { user: User | null, 
                 <div className="flex justify-between items-center">
                   <label className="text-xs font-bold text-stone-500 uppercase tracking-wider">RC Number</label>
                   <div className="flex items-center gap-3">
-                    {rcNumber && rcNumber !== business?.rc_number && (
-                      <button 
-                        onClick={async () => {
-                          if (user) {
-                            try {
-                              await setDoc(doc(db, 'users', user.id, 'business_info', 'info'), { rc_number: rcNumber }, { merge: true });
-                              alert("RC Number updated in your profile!");
-                            } catch (e) {
-                              console.error("Error updating RC Number:", e);
-                            }
-                          }
-                        }}
-                        className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider hover:underline"
-                      >
-                        Save to Profile
-                      </button>
-                    )}
                     {(rcNumber || companyName || address) && (
                       <button 
                         onClick={handleReset}
@@ -3056,7 +3365,16 @@ function CACAnnualReport({ user, transactions, business }: { user: User | null, 
                   className="md:col-span-2 bg-red-50 border border-red-100 p-4 rounded-2xl flex items-center gap-3 text-red-600 text-sm"
                 >
                   <AlertCircle size={18} className="shrink-0" />
-                  <p>{lookupError}</p>
+                  <div className="flex-1">
+                    <p>{lookupError}</p>
+                    <button 
+                      onClick={handleRegisterGlobally}
+                      disabled={isRegisteringGlobally || !companyName || !rcNumber}
+                      className="mt-2 text-xs font-bold underline hover:no-underline disabled:opacity-50"
+                    >
+                      {isRegisteringGlobally ? 'Registering...' : 'Register this business in BizPulse Global Dataset instead?'}
+                    </button>
+                  </div>
                 </motion.div>
               )}
               {lookupResult && !lookupResult.confirmed && (
@@ -3070,7 +3388,16 @@ function CACAnnualReport({ user, transactions, business }: { user: User | null, 
                       <TrendingUp size={20} />
                     </div>
                     <div>
-                      <p className="text-xs text-emerald-600 font-bold uppercase tracking-wider">Company Found</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-emerald-600 font-bold uppercase tracking-wider">
+                          {lookupResult.source === 'internal' ? 'Internal BizPulse Record' : 'External Directory Match'}
+                        </p>
+                        {lookupResult.verification_status === 'verified' && (
+                          <span className="bg-emerald-100 text-emerald-700 text-[8px] px-1.5 py-0.5 rounded-full font-bold flex items-center gap-0.5">
+                            <Shield size={8} /> VERIFIED
+                          </span>
+                        )}
+                      </div>
                       <p className="text-sm font-bold text-stone-900">{lookupResult.name}</p>
                       {lookupResult.address && (
                         <p className="text-[10px] text-stone-500 mt-1">Address: {lookupResult.address}</p>
@@ -3224,12 +3551,35 @@ function CACAnnualReport({ user, transactions, business }: { user: User | null, 
               <p className="text-[10px] text-stone-400 mt-4">These values are automatically calculated from your recorded transactions for the selected financial year.</p>
             </div>
 
-            <button 
-              onClick={() => setIsPreview(true)}
-              className="w-full bg-stone-900 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-stone-800 transition-all shadow-lg"
-            >
-              Generate Provisional Report
-            </button>
+            <div className="flex flex-col md:flex-row gap-4">
+              <button 
+                onClick={async () => {
+                  if (user) {
+                    try {
+                      await setDoc(doc(db, 'users', user.id, 'business_info', 'info'), { 
+                        name: companyName,
+                        rc_number: rcNumber,
+                        address: address,
+                        activity: activity
+                      }, { merge: true });
+                      alert("Business profile updated successfully!");
+                    } catch (e) {
+                      console.error("Error updating profile:", e);
+                      alert("Failed to update profile.");
+                    }
+                  }
+                }}
+                className="flex-1 bg-stone-100 text-stone-600 py-4 rounded-2xl font-bold hover:bg-stone-200 transition-all"
+              >
+                Save to My Profile
+              </button>
+              <button 
+                onClick={() => setIsPreview(true)}
+                className="flex-[2] bg-stone-900 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-stone-800 transition-all shadow-lg"
+              >
+                Generate Provisional Report
+              </button>
+            </div>
           </>
         )}
       </div>
@@ -3347,10 +3697,12 @@ function TaxEstimator({ user, transactions, business }: { user: User | null, tra
         pagebreak:    { mode: ['css', 'legacy'], avoid: ['tr', 'h1', 'h2', 'h3', 'p', 'li', '.avoid-break'] }
       };
 
-      await html2pdf().set(opt).from(reportRef.current).save();
-    } catch (err) {
+      const html2pdfFn = typeof html2pdf === 'function' ? html2pdf : (html2pdf as any).default;
+      await html2pdfFn().set(opt).from(reportRef.current).save();
+    } catch (err: any) {
       console.error("Error generating PDF:", err);
-      alert(`Failed to generate PDF: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      alert(`PDF generation failed (${err?.message || err}). Falling back to Print dialog - please select "Save as PDF" as your printer.`);
+      handlePrintReport();
     } finally {
       setIsDownloading(false);
     }
@@ -3400,11 +3752,10 @@ function TaxEstimator({ user, transactions, business }: { user: User | null, tra
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/ai/generate-tax-estimate', {
+      const response = await apiFetch('/api/ai/generate-tax-estimate', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           taxType,
@@ -3420,7 +3771,12 @@ function TaxEstimator({ user, transactions, business }: { user: User | null, tra
       });
 
       if (!response.ok) {
-        throw new Error('Failed to generate estimate');
+        let errMsg = 'Failed to generate estimate';
+        try {
+          const errData = await response.json();
+          if (errData.error) errMsg = errData.error;
+        } catch (e) {}
+        throw new Error(errMsg);
       }
 
       const data = await response.json();
@@ -3723,7 +4079,13 @@ function SubscriptionGate({ title, description, requiredTier, onUpgrade }: { tit
 // --- Settings Component ---
 function SettingsView({ user, business, onUpdate, onNavigate }: { user: User | null, business: BusinessInfo | null, onUpdate: () => void, onNavigate: (tab: any) => void }) {
   const [name, setName] = useState(business?.name || '');
+  const [rcNumber, setRcNumber] = useState(business?.rc_number || '');
+  const [phoneNumber, setPhoneNumber] = useState(business?.phone_number || '');
+  const [emailAddress, setEmailAddress] = useState(business?.email_address || '');
+  const [businessAddress, setBusinessAddress] = useState(business?.address || '');
+  const [natureOfBusiness, setNatureOfBusiness] = useState(business?.nature_of_business || '');
   const [logo, setLogo] = useState<File | null>(null);
+  const [userPhoto, setUserPhoto] = useState<File | null>(null);
   const [pin, setPin] = useState('');
   const [isSettingPin, setIsSettingPin] = useState(false);
   const [paymentGateway, setPaymentGateway] = useState<'paystack' | 'monnify'>(business?.payment_gateway || 'paystack');
@@ -3775,28 +4137,69 @@ function SettingsView({ user, business, onUpdate, onNavigate }: { user: User | n
     if (!userId) return;
     
     if (!name.trim()) {
-      alert("Business Name cannot be empty.");
+      alert("Business Name is required.");
+      return;
+    }
+
+    if (!phoneNumber.trim()) {
+      alert("Phone Number is required.");
       return;
     }
 
     let logo_url = business?.logo_url || null;
+    let user_photo_url = business?.user_photo_url || null;
 
     if (logo) {
       try {
         const dataUrl = await compressImage(logo);
         logo_url = dataUrl;
       } catch (err) {
-        console.error("Upload failed", err);
+        console.error("Logo upload failed", err);
+      }
+    }
+
+    if (userPhoto) {
+      try {
+        const dataUrl = await compressImage(userPhoto);
+        user_photo_url = dataUrl;
+      } catch (err) {
+        console.error("User photo upload failed", err);
       }
     }
 
     await setDoc(doc(db, 'users', userId, 'business_info', 'info'), {
       name,
+      rc_number: rcNumber,
+      phone_number: phoneNumber,
+      email_address: emailAddress,
+      address: businessAddress,
+      nature_of_business: natureOfBusiness,
       logo_url,
+      user_photo_url,
       is_subscribed: business?.is_subscribed || 0,
       payment_gateway: paymentGateway,
       monnify_test_mode: monnifyTestMode
     }, { merge: true });
+
+    // Also attempt global registration if RC number is provided
+    if (rcNumber) {
+      try {
+        await apiFetch('/api/business/manual-entry', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            registration_number: rcNumber,
+            business_type: 'Business Name',
+            address: '',
+            registration_date: ''
+          })
+        });
+      } catch (e) {
+        // Ignore errors if already exists or other issues, we primary care about user profile save
+        console.log("Global registration skipped or failed:", e);
+      }
+    }
     
     onUpdate();
     alert('Settings saved!');
@@ -3808,33 +4211,110 @@ function SettingsView({ user, business, onUpdate, onNavigate }: { user: User | n
         <h3 className="font-bold text-lg mb-8">Business Profile</h3>
         
         <div className="space-y-6">
-          <div className="flex items-center gap-8">
-            <div className="relative group">
-              <div className="w-24 h-24 bg-stone-100 rounded-3xl flex items-center justify-center text-stone-300 overflow-hidden border-2 border-stone-100 group-hover:border-emerald-500 transition-all">
-                {business?.logo_url ? (
-                  <img src={business.logo_url} alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  <Upload size={32} />
-                )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="flex items-center gap-4">
+              <div className="relative group">
+                <div className="w-20 h-20 bg-stone-100 rounded-2xl flex items-center justify-center text-stone-300 overflow-hidden border-2 border-stone-100 group-hover:border-emerald-500 transition-all">
+                  {business?.logo_url ? (
+                    <img src={business.logo_url} alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <Upload size={24} />
+                  )}
+                </div>
+                <input 
+                  type="file" 
+                  onChange={e => setLogo(e.target.files?.[0] || null)}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
               </div>
+              <div>
+                <h4 className="font-bold text-xs mb-1">Business Logo</h4>
+                <p className="text-[10px] text-stone-400">Company branding</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="relative group">
+                <div className="w-20 h-20 bg-stone-100 rounded-full flex items-center justify-center text-stone-300 overflow-hidden border-2 border-stone-100 group-hover:border-emerald-500 transition-all">
+                  {business?.user_photo_url ? (
+                    <img src={business.user_photo_url} alt="User" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <UserIcon size={24} />
+                  )}
+                </div>
+                <input 
+                  type="file" 
+                  onChange={e => setUserPhoto(e.target.files?.[0] || null)}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+              </div>
+              <div>
+                <h4 className="font-bold text-xs mb-1">User Photo</h4>
+                <p className="text-[10px] text-stone-400">Personal profile picture</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Business Name <span className="text-rose-500">*</span></label>
               <input 
-                type="file" 
-                onChange={e => setLogo(e.target.files?.[0] || null)}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder="Official Business Name"
               />
             </div>
+
             <div>
-              <h4 className="font-bold text-sm mb-1">Business Logo</h4>
-              <p className="text-xs text-stone-400">Upload your company logo to customize reports and dashboard.</p>
+              <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Phone Number <span className="text-rose-500">*</span></label>
+              <input 
+                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none"
+                value={phoneNumber}
+                onChange={e => setPhoneNumber(e.target.value)}
+                placeholder="e.g. +234 800 000 0000"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Email Address</label>
+              <input 
+                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none"
+                value={emailAddress}
+                onChange={e => setEmailAddress(e.target.value)}
+                placeholder="business@example.com"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">RC / BN Number</label>
+              <input 
+                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none"
+                value={rcNumber}
+                onChange={e => setRcNumber(e.target.value)}
+                placeholder="e.g. RC 1234567"
+              />
             </div>
           </div>
 
           <div>
-            <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Business Name</label>
+            <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Business Address / Location</label>
             <input 
               className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none"
-              value={name}
-              onChange={e => setName(e.target.value)}
+              value={businessAddress}
+              onChange={e => setBusinessAddress(e.target.value)}
+              placeholder="Full physical address"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Nature of Business</label>
+            <textarea 
+              className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none resize-none"
+              value={natureOfBusiness}
+              onChange={e => setNatureOfBusiness(e.target.value)}
+              placeholder="e.g. General Merchandise, IT Consulting, Retail"
+              rows={3}
             />
           </div>
 
@@ -3971,18 +4451,20 @@ function SettingsView({ user, business, onUpdate, onNavigate }: { user: User | n
         </button>
       </div>
 
-      <div className="bg-blue-50 p-8 rounded-3xl border border-blue-100">
-        <h3 className="font-bold text-blue-900 text-lg mb-2">Export Project</h3>
-        <p className="text-blue-600 text-sm mb-6">Download the complete source code of this application as a ZIP file.</p>
-        <a 
-          href="/api/download-source"
-          download="bizpulse-source.zip"
-          className="inline-flex items-center gap-2 bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition-all"
-        >
-          <Download size={18} />
-          Download Source Code (ZIP)
-        </a>
-      </div>
+      {(user?.role === 'admin' || user?.email?.toLowerCase() === 'haddoyframes@gmail.com') && (
+        <div className="bg-blue-50 p-8 rounded-3xl border border-blue-100">
+          <h3 className="font-bold text-blue-900 text-lg mb-2">Export Project</h3>
+          <p className="text-blue-600 text-sm mb-6">Download the complete source code of this application as a ZIP file.</p>
+          <a 
+            href="/api/download-source"
+            download="bizpulse-source.zip"
+            className="inline-flex items-center gap-2 bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition-all"
+          >
+            <Download size={18} />
+            Download Source Code (ZIP)
+          </a>
+        </div>
+      )}
     </div>
   );
 }
@@ -3999,11 +4481,10 @@ function AIAdvisorView({ user, transactions, business }: { user: User | null, tr
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/ai/business-insights', {
+      const response = await apiFetch('/api/ai/business-insights', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           businessName: business?.name,
@@ -4013,7 +4494,12 @@ function AIAdvisorView({ user, transactions, business }: { user: User | null, tr
       });
 
       if (!response.ok) {
-        throw new Error('Failed to generate insights');
+        let errMsg = 'Failed to generate insights';
+        try {
+          const errData = await response.json();
+          if (errData.error) errMsg = errData.error;
+        } catch (e) {}
+        throw new Error(errMsg);
       }
 
       const data = await response.json();
