@@ -1,0 +1,194 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
+    // Global Hardened Helpers (Phase 3)
+    // ===============================================================
+    function isSignedIn() { 
+      return request.auth != null; 
+    }
+    
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+    
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.\\@\\/]+$'); 
+    }
+    
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    
+    function getUserData(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+    
+    function isAdmin() { 
+      return isEmailVerified() && (
+        getUserData(request.auth.uid).role == 'admin' ||
+        request.auth.token.email == "haddoyframes@gmail.com"
+      );
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // ===============================================================
+    // Validation Blueprints (Pillar 2)
+    // ===============================================================
+    
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'subscription_tier', 'subscription_status']) &&
+             data.email is string && data.email.size() <= 100 &&
+             data.subscription_tier in ['free', 'basic', 'pro'] &&
+             data.subscription_status in ['active', 'expired', 'pending', 'canceled'] &&
+             (!('hasPin' in data) || data.hasPin is bool) &&
+             (!('pin' in data) || (data.pin is string && data.pin.size() >= 4 && data.pin.size() <= 6)) &&
+             (!('role' in data) || data.role in ['admin', 'user']) &&
+             (!('unlocked_cac_years' in data) || (data.unlocked_cac_years is list && data.unlocked_cac_years.size() <= 100)) &&
+             (!('unlocked_tax_years' in data) || (data.unlocked_tax_years is list && data.unlocked_tax_years.size() <= 100));
+    }
+
+    function isValidBusinessInfo(data) {
+      return data.keys().hasAll(['name']) &&
+             data.name is string && data.name.size() <= 150 &&
+             (!('phone_number' in data) || (data.phone_number is string && data.phone_number.size() <= 50)) &&
+             (!('email_address' in data) || (data.email_address is string && data.email_address.size() <= 100)) &&
+             (!('logo_url' in data) || data.logo_url == null || (data.logo_url is string && data.logo_url.size() <= 100000)) && // Data URLs can be large
+             (!('user_photo_url' in data) || data.user_photo_url == null || (data.user_photo_url is string && data.user_photo_url.size() <= 100000)) &&
+             (!('address' in data) || (data.address is string && data.address.size() <= 1000)) &&
+             (!('nature_of_business' in data) || (data.nature_of_business is string && data.nature_of_business.size() <= 2000)) &&
+             (!('rc_number' in data) || (data.rc_number is string && data.rc_number.size() <= 50)) &&
+             (!('is_subscribed' in data) || data.is_subscribed is number) &&
+             (!('payment_gateway' in data) || data.payment_gateway in ['paystack', 'monnify']) &&
+             (!('monnify_test_mode' in data) || data.monnify_test_mode is bool);
+    }
+
+    function isValidInventoryItem(data) {
+      return data.keys().hasAll(['name', 'price', 'stock']) &&
+             data.name is string && data.name.size() <= 200 &&
+             data.price is number && data.price >= 0 &&
+             data.stock is number &&
+             (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 2000)) &&
+             (!('size' in data) || data.size == null || (data.size is string && data.size.size() <= 50)) &&
+             (!('photo_url' in data) || data.photo_url == null || (data.photo_url is string && data.photo_url.size() <= 1000000)) &&
+             (!('vat_status' in data) || data.vat_status == null || data.vat_status in ['vatable', 'exempt', 'zero_rated']);
+    }
+
+    function isValidTransaction(data) {
+      return data.keys().hasAll(['type', 'amount', 'category', 'date']) &&
+             data.type in ['sale', 'expense'] &&
+             data.amount is number && data.amount >= 0 &&
+             data.category is string && data.category.size() <= 100 &&
+             data.date is string && data.date.size() <= 64 &&
+             (!('product_id' in data) || data.product_id == null || (data.product_id is string && data.product_id.size() <= 128)) &&
+             (!('customer_id' in data) || data.customer_id == null || (data.customer_id is string && data.customer_id.size() <= 128)) &&
+             (!('quantity' in data) || data.quantity == null || (data.quantity is number || data.quantity is string)) &&
+             (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 2000)) &&
+             (!('vat_status' in data) || data.vat_status == null || data.vat_status in ['vatable', 'exempt', 'zero_rated']);
+    }
+
+    function isValidCustomer(data) {
+      return data.keys().hasAll(['name']) &&
+             data.name is string && data.name.size() <= 150 &&
+             (!('email' in data) || data.email == null || (data.email is string && data.email.size() <= 100)) &&
+             (!('phone' in data) || data.phone == null || (data.phone is string && data.phone.size() <= 50)) &&
+             (!('address' in data) || data.address == null || (data.address is string && data.address.size() <= 500)) &&
+             (!('created_at' in data) || data.created_at == null || (data.created_at is string && data.created_at.size() <= 64));
+    }
+
+    function isValidBillingHistory(data) {
+      return data.keys().hasAll(['amount', 'date', 'status', 'gateway', 'reference']) &&
+             data.amount is number &&
+             data.date is string && data.date.size() <= 64 &&
+             data.status in ['success', 'failed', 'pending'] &&
+             data.gateway in ['paystack', 'monnify', 'bank_transfer', 'admin'] &&
+             data.reference is string && data.reference.size() <= 128 &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 500));
+    }
+
+    // ===============================================================
+    // Collection Matchers (Pillar 1 & 4)
+    // ===============================================================
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+
+      allow create: if (isOwner(userId) && isValidUser(incoming()) && (
+        incoming().role == 'user' || !('role' in incoming())
+      )) || isAdmin();
+      
+      allow update: if isAdmin() || (
+        isOwner(userId) && isValidUser(incoming()) && (
+          // Action: Update Profile (Non-critical fields)
+          incoming().diff(existing()).affectedKeys().hasOnly(['email', 'hasPin', 'pin', 'unlocked_cac_years', 'unlocked_tax_years']) &&
+          incoming().role == existing().role &&
+          incoming().subscription_tier == existing().subscription_tier
+        )
+      );
+      
+      allow delete: if isAdmin();
+
+      // Master Gate: Relational Sync (Pillar 1)
+      function isParentValid() {
+        return isOwner(userId) || isAdmin();
+      }
+
+      match /business_info/{infoId} {
+        allow read: if isParentValid();
+        allow create: if isParentValid() && isValidId(infoId) && isValidBusinessInfo(incoming());
+        allow update: if isParentValid() && isValidId(infoId) && isValidBusinessInfo(incoming());
+        allow delete: if isAdmin();
+      }
+
+      match /inventory/{itemId} {
+        allow read: if isParentValid();
+        allow create: if isParentValid() && isValidId(itemId) && isValidInventoryItem(incoming());
+        allow update: if isParentValid() && isValidId(itemId) && (
+          isValidInventoryItem(incoming()) || 
+          // Action: Stock Update (from transactions)
+          incoming().diff(existing()).affectedKeys().hasOnly(['stock'])
+        );
+        allow delete: if isParentValid();
+      }
+
+      match /transactions/{transactionId} {
+        allow read: if isParentValid();
+        allow create: if isParentValid() && isValidId(transactionId) && isValidTransaction(incoming());
+        allow update: if isParentValid() && isValidId(transactionId) && isValidTransaction(incoming());
+        allow delete: if isParentValid();
+      }
+
+      match /customers/{customerId} {
+        allow read: if isParentValid();
+        allow create: if isParentValid() && isValidId(customerId) && isValidCustomer(incoming());
+        allow update: if isParentValid() && isValidId(customerId) && isValidCustomer(incoming());
+        allow delete: if isParentValid();
+      }
+
+      match /billing_history/{historyId} {
+        allow read: if isParentValid();
+        allow create: if isParentValid() && isValidId(historyId) && isValidBillingHistory(incoming());
+        allow update: if isAdmin();
+        allow delete: if isAdmin();
+      }
+    }
+
+    match /businesses/{registrationNumber} {
+      // Global directory
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isEmailVerified() && isValidId(registrationNumber);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+  }
+}

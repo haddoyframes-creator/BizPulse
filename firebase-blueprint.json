@@ -1,0 +1,146 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and subscription data",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "hasPin": { "type": "boolean" },
+        "subscription_tier": { "type": "string", "enum": ["free", "basic", "pro"] },
+        "subscription_status": { "type": "string", "enum": ["active", "expired", "pending"] },
+        "unlocked_cac_years": { "type": "array", "items": { "type": "number" } },
+        "unlocked_tax_years": { "type": "array", "items": { "type": "number" } }
+      },
+      "required": ["email", "subscription_tier", "subscription_status"]
+    },
+    "BusinessInfo": {
+      "title": "BusinessInfo",
+      "description": "Business details for the user",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "logo_url": { "type": "string" },
+        "user_photo_url": { "type": "string" },
+        "phone_number": { "type": "string" },
+        "email_address": { "type": "string" },
+        "address": { "type": "string" },
+        "nature_of_business": { "type": "string" },
+        "rc_number": { "type": "string" },
+        "is_subscribed": { "type": "number" },
+        "payment_gateway": { "type": "string", "enum": ["paystack", "monnify"] },
+        "monnify_test_mode": { "type": "boolean" }
+      },
+      "required": ["name", "phone_number"]
+    },
+    "InventoryItem": {
+      "title": "InventoryItem",
+      "description": "Inventory item for the business",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "stock": { "type": "number" },
+        "photo_url": { "type": "string" },
+        "size": { "type": "string" },
+        "vat_status": { "type": "string", "enum": ["vatable", "exempt", "zero_rated"] }
+      },
+      "required": ["name", "price", "stock"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "A sale or expense transaction",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["sale", "expense"] },
+        "amount": { "type": "number" },
+        "category": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "product_id": { "type": "string" },
+        "customer_id": { "type": "string" },
+        "quantity": { "type": "number" },
+        "description": { "type": "string" },
+        "item_name": { "type": "string" },
+        "vat_status": { "type": "string", "enum": ["vatable", "exempt", "zero_rated"] }
+      },
+      "required": ["type", "amount", "category", "date"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Customer details",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "created_at"]
+    },
+    "VerifiedBusiness": {
+      "title": "VerifiedBusiness",
+      "description": "Registered business in the BizPulse dataset",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "registration_number": { "type": "string" },
+        "business_type": { "type": "string", "enum": ["Business Name", "LTD", "LLP", "NGO"] },
+        "address": { "type": "string" },
+        "registration_date": { "type": "string", "format": "date" },
+        "source": { "type": "string", "enum": ["manual", "directory", "verified", "user submitted"] },
+        "verification_status": { "type": "string", "enum": ["unverified", "pending", "verified"] },
+        "tax_id": { "type": "string" },
+        "last_annual_return_year": { "type": "number" },
+        "compliance_status": { "type": "string", "enum": ["compliant", "non-compliant", "unknown"] },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "registration_number", "business_type", "source", "verification_status", "updated_at"]
+    },
+    "BillingHistory": {
+      "title": "BillingHistory",
+      "description": "User payment records",
+      "type": "object",
+      "properties": {
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "status": { "type": "string" },
+        "gateway": { "type": "string" },
+        "reference": { "type": "string" }
+      },
+      "required": ["amount", "date", "status", "gateway", "reference"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User document containing profile and subscription info."
+    },
+    "/users/{userId}/business_info/{infoId}": {
+      "schema": { "$ref": "#/entities/BusinessInfo" },
+      "description": "Business info for the user."
+    },
+    "/users/{userId}/inventory/{itemId}": {
+      "schema": { "$ref": "#/entities/InventoryItem" },
+      "description": "Inventory items belonging to the user."
+    },
+    "/users/{userId}/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Transactions belonging to the user."
+    },
+    "/users/{userId}/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/Customer" },
+      "description": "Customers belonging to the user."
+    },
+    "/users/{userId}/billing_history/{historyId}": {
+      "schema": { "$ref": "#/entities/BillingHistory" },
+      "description": "Billing records for the user."
+    },
+    "/businesses/{registrationNumber}": {
+      "schema": { "$ref": "#/entities/VerifiedBusiness" },
+      "description": "Global dataset of registered businesses."
+    }
+  }
+}
