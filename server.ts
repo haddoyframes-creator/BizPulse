@@ -16,6 +16,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key-change-in-product
 // Initialize Firebase Admin
 try {
   const serviceAccountKeyPath = path.resolve("serviceAccountKey.json");
+  const alternateKeyPath = path.resolve("firebase_service_account.json");
   const fallbackConfigPath = path.resolve("firebase-applet-config.json");
   
   let serviceAccount = null;
@@ -26,16 +27,67 @@ try {
     sourceFile = "Environment Variable (FIREBASE_SERVICE_ACCOUNT)";
     try {
       // Handle potential single-quote/double-quote issues or escapings from some CI/CD platforms
-      const cleanEnv = envValue.trim();
-      serviceAccount = JSON.parse(cleanEnv);
+      let cleanEnv = envValue.trim();
+      
+      // Remove surrounding quotes if they exist
+      if ((cleanEnv.startsWith('"') && cleanEnv.endsWith('"')) || (cleanEnv.startsWith("'") && cleanEnv.endsWith("'"))) {
+        cleanEnv = cleanEnv.substring(1, cleanEnv.length - 1);
+      }
+      
+      // Attempt 1: Direct parse
+      try {
+        serviceAccount = JSON.parse(cleanEnv);
+      } catch (e) {
+        // Attempt 2: Handle escaped newlines (common when pasting into shell)
+        try {
+          const handledNewlines = cleanEnv.replace(/\\n/g, '\n');
+          serviceAccount = JSON.parse(handledNewlines);
+        } catch (e2) {
+          // Attempt 3: Extract JSON if it's part of a larger string (common copy-paste errors)
+          try {
+            const start = cleanEnv.indexOf('{');
+            const end = cleanEnv.lastIndexOf('}');
+            if (start !== -1 && end !== -1 && end > start) {
+              const potentialJson = cleanEnv.substring(start, end + 1);
+              serviceAccount = JSON.parse(potentialJson);
+            } else {
+              throw new Error("No JSON bracket structure found");
+            }
+          } catch (e3) {
+            // Attempt 4: Try base64 decoding (common for large binary-like env vars)
+            try {
+              const decoded = Buffer.from(cleanEnv, 'base64').toString('utf-8');
+              const trimmedDecoded = decoded.trim();
+              if (trimmedDecoded.startsWith('{')) {
+                serviceAccount = JSON.parse(trimmedDecoded);
+              } else {
+                throw new Error("Decoded content is not a JSON object");
+              }
+            } catch (e4) {
+              // Final Attempt: If it looks like many key-value pairs (not JSON but a list of env vars)
+              // This is a last resort if they pasted something like "type=service_account\nproject_id=..."
+              throw e; // Give up and throw the first error
+            }
+          }
+        }
+      }
     } catch (parseErr) {
-      console.error(`ERROR: ${sourceFile} is present but NOT valid JSON.`);
-      console.error("Technical details:", parseErr instanceof Error ? parseErr.message : String(parseErr));
-      console.error("Please ensure you copied the FULL content of your serviceAccountKey.json into the Render environment variable.");
+      // If it looks like a placeholder, don't log it as a big error
+      const isPlaceholder = envValue.includes("YOUR_") || envValue.includes("ENTER_") || envValue.length < 50;
+      if (isPlaceholder) {
+        console.warn(`NOTICE: ${sourceFile} appears to be a placeholder or invalid value: "${envValue.substring(0, 20)}..."`);
+      } else {
+        console.error(`ERROR: ${sourceFile} is present but NOT valid JSON.`);
+        console.error("Technical details:", parseErr instanceof Error ? parseErr.message : String(parseErr));
+        console.error("Please ensure you copied the FULL content of your serviceAccountKey.json into the environment variable.");
+      }
     }
   } else if (fs.existsSync(serviceAccountKeyPath)) {
     sourceFile = "serviceAccountKey.json";
     serviceAccount = JSON.parse(fs.readFileSync(serviceAccountKeyPath, "utf-8"));
+  } else if (fs.existsSync(alternateKeyPath)) {
+    sourceFile = "firebase_service_account.json";
+    serviceAccount = JSON.parse(fs.readFileSync(alternateKeyPath, "utf-8"));
   }
 
   if (serviceAccount) {

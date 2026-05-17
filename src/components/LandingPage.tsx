@@ -40,10 +40,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
             </div>
             <span className="text-lg sm:text-xl font-bold tracking-tight">BizPulse</span>
           </div>
-          <div className="flex items-center gap-2 sm:gap-8 text-[11px] sm:text-sm font-bold sm:font-medium text-stone-500 sm:text-stone-600">
+          <div className="hidden sm:flex items-center gap-8 text-sm font-medium text-stone-600">
             <a href="#features" className="hover:text-emerald-600 transition-colors whitespace-nowrap">Features</a>
             <a href="#benefits" className="hover:text-emerald-600 transition-colors whitespace-nowrap">Benefits</a>
             <a href="#pricing" className="hover:text-emerald-600 transition-colors whitespace-nowrap">Pricing</a>
+          </div>
+          <div className="flex sm:hidden items-center gap-3 text-[10px] font-bold text-stone-500">
+             <a href="#features" className="hover:text-emerald-600 uppercase">Features</a>
+             <a href="#benefits" className="hover:text-emerald-600 uppercase">Benefits</a>
+             <a href="#pricing" className="hover:text-emerald-600 uppercase">Pricing</a>
           </div>
           <button 
             onClick={onGetStarted}
@@ -434,15 +439,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
                 className="relative rounded-[3rem] overflow-hidden shadow-[0_32px_64px_-16px_rgba(0,0,0,0.1)] border border-stone-100 bg-stone-50 group aspect-video lg:aspect-[4/3]"
               >
                 <img 
-                  src="https://images.unsplash.com/photo-1556740714-a439f322405d?q=80&w=1600&auto=format&fit=crop" 
-                  alt="Professional boutique owner reviewing business analytics on a tablet" 
+                  src="https://images.unsplash.com/photo-1556742502-ec7c0e9f34b1?q=80&w=1600&auto=format&fit=crop" 
+                  alt="Business owner using smart tracking tools" 
                   className="w-full h-full object-cover block transition-transform duration-700 group-hover:scale-105"
                   referrerPolicy="no-referrer"
-                  onError={(e) => {
-                    const target = e.target as HTMLImageElement;
-                    target.src = "https://images.unsplash.com/photo-1556740758-90de374c12ad?q=80&w=1600&auto=format&fit=crop";
-                    target.onerror = null;
-                  }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none" />
                 <div className="absolute bottom-8 left-8 right-8 p-6 bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 translate-y-4 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500">

@@ -10,10 +10,13 @@ import {
   Trash2,
   Download,
   Pencil,
+  CheckCircle2,
+  ClipboardCheck,
   FileText, 
   Settings as SettingsIcon, 
   TrendingUp, 
   TrendingDown, 
+  X,
   DollarSign,
   Camera,
   Upload,
@@ -54,7 +57,7 @@ import { usePaystackPayment } from 'react-paystack';
 import MonnifyButton from 'react-monnify-sdk';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, isWithinInterval, parseISO } from 'date-fns';
+import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, isWithinInterval, parseISO, differenceInDays } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import Login from './components/Login';
@@ -114,8 +117,8 @@ const compressImage = (file: File, maxWidth: number = 800, quality: number = 0.5
 
 import { auth, db, isConfigured } from './firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, doc, onSnapshot, query, setDoc, addDoc, updateDoc, deleteDoc, orderBy, getDocFromServer, getDoc, getDocs, increment } from 'firebase/firestore';
-import { BusinessInfo, InventoryItem, Transaction, DailyStat, Customer, User } from './types';
+import { collection, doc, onSnapshot, query, setDoc, addDoc, updateDoc, deleteDoc, orderBy, getDocFromServer, getDoc, getDocs, increment, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { BusinessInfo, InventoryItem, Transaction, DailyStat, Customer, User, StockTake, StockTakeItem } from './types';
 
 enum OperationType {
   CREATE = 'create',
@@ -243,13 +246,19 @@ export const apiFetch = async (url: string, options: RequestInit = {}) => {
             
             // Update inventory stock
             if (data.product_id) {
-              const qty = parseInt(data.quantity) || 1;
+              const rawQty = parseFloat(data.quantity);
+              const qty = isNaN(rawQty) ? 1 : rawQty;
               const stockChange = data.type === 'sale' ? -qty : qty;
               const productRef = doc(db, 'users', userId, 'inventory', data.product_id.toString());
               try {
-                await updateDoc(productRef, { stock: increment(stockChange) });
+                // Ensure atomic update even if multiple items are processed in parallel
+                await updateDoc(productRef, { 
+                  stock: increment(stockChange),
+                  updatedAt: serverTimestamp()
+                });
+                console.log(`Stock updated for ${data.product_id}: ${stockChange}`);
               } catch (e) { 
-                console.error("Stock update failed", e);
+                console.error("Stock update failed for product", data.product_id, e);
               }
             }
             
@@ -507,7 +516,12 @@ export default function App() {
             const data = docSnap.data();
             // Migrate existing users to have a trial start date if they don't have one
             if (!data.trial_started_at) {
-              await updateDoc(docSnap.ref, { trial_started_at: new Date().toISOString() });
+              console.log("[Migration] Setting trial_started_at for user:", userId);
+              updateDoc(docSnap.ref, { 
+                trial_started_at: new Date().toISOString() 
+              }).catch(err => {
+                console.error("[Migration] Failed to update trial_started_at:", err);
+              });
             }
             setUser({ 
               id: userId as any, 
@@ -640,17 +654,53 @@ export default function App() {
     return <LandingPage onGetStarted={() => setShowAuth(true)} />;
   }
 
-  const renderContent = () => {
+const getTrialInfo = (trialStartedAt?: any) => {
+  if (!trialStartedAt) return { days: 14, hours: 0, minutes: 0, progress: 100, active: true };
+  try {
+    let start: Date;
+    if (typeof trialStartedAt === 'string') {
+      start = parseISO(trialStartedAt);
+    } else if (trialStartedAt && typeof trialStartedAt.toDate === 'function') {
+      start = trialStartedAt.toDate();
+    } else if (trialStartedAt instanceof Date) {
+      start = trialStartedAt;
+    } else {
+      start = new Date(trialStartedAt);
+    }
+    
+    if (isNaN(start.getTime())) throw new Error("Invalid date");
+
+    const now = new Date();
+    const elapsedMs = now.getTime() - start.getTime();
+    const elapsedDays = elapsedMs / (1000 * 60 * 60 * 24);
+    const remainingDaysTotal = Math.max(0, 14 - elapsedDays);
+    
+    const d = Math.floor(remainingDaysTotal);
+    const h = Math.floor((remainingDaysTotal - d) * 24);
+    const m = Math.floor(((remainingDaysTotal - d) * 24 - h) * 60);
+    
+    return {
+      days: d,
+      hours: h,
+      minutes: m,
+      progress: (remainingDaysTotal / 14) * 100,
+      active: remainingDaysTotal > 0
+    };
+  } catch (e) {
+    console.warn("Trial info calc warning (defaulting to 14):", e);
+    return { days: 14, hours: 0, minutes: 0, progress: 100, active: true };
+  }
+};
+
+const renderContent = () => {
     const tier = user?.subscription_tier || 'free';
-    const trialStart = user?.trial_started_at ? parseISO(user.trial_started_at) : new Date();
-    const trialDaysElapsed = Math.floor((new Date().getTime() - trialStart.getTime()) / (1000 * 60 * 60 * 24));
-    const daysRemaining = Math.max(0, 14 - trialDaysElapsed);
-    const isTrialActive = daysRemaining > 0;
+    const trial = getTrialInfo(user?.trial_started_at);
+    const isTrialActive = trial.active;
 
     switch (activeTab) {
       case 'dashboard': return <Dashboard stats={stats} transactions={transactions} onNavigate={changeTab} />;
       case 'admin': return <AdminDashboard user={user} />;
-      case 'inventory': return <Inventory user={user} inventory={inventory} onUpdate={fetchData} />;
+      case 'inventory': return <Inventory user={user} inventory={inventory} onUpdate={fetchData} subscriptionTier={tier} isTrialActive={isTrialActive} changeTab={changeTab} />;
       case 'transactions': return <Transactions user={user} transactions={transactions} inventory={inventory} customers={customers} onUpdate={fetchData} />;
       case 'customers': return <Customers customers={customers} onUpdate={fetchData} />;
       case 'performance': 
@@ -765,6 +815,7 @@ export default function App() {
           <NavItem icon={<SettingsIcon size={20} />} label="Settings" active={activeTab === 'settings'} onClick={() => changeTab('settings')} collapsed={isSidebarCollapsed} />
         </nav>
 
+        {/* Trial Progress */}
         <div className={cn(
           "p-6 border-t border-stone-100 space-y-4",
           isSidebarCollapsed && "px-2"
@@ -776,20 +827,23 @@ export default function App() {
                  <span className="text-[10px] font-bold uppercase tracking-wider">Free Trial Period</span>
                </div>
                {(() => {
-                 const trialStart = user?.trial_started_at ? parseISO(user.trial_started_at) : new Date();
-                 const trialDaysElapsed = Math.floor((new Date().getTime() - trialStart.getTime()) / (1000 * 60 * 60 * 24));
-                 const daysRemaining = Math.max(0, 14 - trialDaysElapsed);
+                 const trial = getTrialInfo(user?.trial_started_at);
                  
                  return (
                    <>
-                     <div className="flex items-end justify-between mb-1">
-                       <span className="text-2xl font-bold text-emerald-900 leading-none">{daysRemaining}</span>
-                       <span className="text-[10px] font-bold text-emerald-600 mb-0.5">days left</span>
+                     <div className="flex flex-col mb-1">
+                       <div className="flex items-end justify-between">
+                         <span className="text-2xl font-bold text-emerald-900 leading-none">{trial.days}</span>
+                         <span className="text-[10px] font-bold text-emerald-600 mb-0.5">days left</span>
+                       </div>
+                       <div className="flex items-center justify-between mt-1">
+                         <span className="text-[9px] font-medium text-emerald-600">{trial.hours}h {trial.minutes}m remaining</span>
+                       </div>
                      </div>
                      <div className="w-full bg-emerald-200 h-1 rounded-full mb-3 overflow-hidden">
                        <motion.div 
                          initial={{ width: 0 }}
-                         animate={{ width: `${(daysRemaining / 14) * 100}%` }}
+                         animate={{ width: `${trial.progress}%` }}
                          className="bg-emerald-600 h-full rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]"
                        />
                      </div>
@@ -1277,6 +1331,7 @@ function AdminDashboard({ user }: { user: User | null }) {
 
 function Dashboard({ stats, transactions, onNavigate }: { stats: DailyStat[], transactions: Transaction[], onNavigate: (tab: any) => void }) {
   const [viewMode, setViewMode] = useState<'week' | 'month' | 'year' | 'lifetime'>('week');
+  const user = auth.currentUser;
   
   const now = new Date();
   let start: Date;
@@ -1355,6 +1410,7 @@ function Dashboard({ stats, transactions, onNavigate }: { stats: DailyStat[], tr
 
   return (
     <div className="space-y-8">
+      <StockTakeReminder user={user as any} onNavigate={onNavigate} />
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -1516,9 +1572,141 @@ function StatCard({ title, value, icon, trend, highlight }: { title: string, val
   );
 }
 
+import * as XLSX from 'xlsx';
+import * as pdfjs from 'pdfjs-dist';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+
+// pdfjs worker setup
+pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
+
+function StockTakeReminder({ user, onNavigate }: { user: User | null, onNavigate: (tab: any) => void }) {
+  const [isDue, setIsDue] = useState(false);
+  
+  useEffect(() => {
+    if (!user) return;
+    const uid = (user as any).uid || (user as any).id;
+    const lastStr = localStorage.getItem(`last_stock_take_${uid}`);
+    if (!lastStr) {
+      setIsDue(true); 
+      return;
+    }
+    
+    const last = new Date(lastStr);
+    const now = new Date();
+    const diffDays = Math.abs(differenceInDays(now, last));
+    
+    if (diffDays >= 30) {
+      setIsDue(true);
+    } else {
+      setIsDue(false);
+    }
+  }, [user]);
+
+  if (!isDue) return null;
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="bg-amber-50 border-2 border-amber-100 p-6 rounded-[2rem] flex flex-col sm:flex-row items-center justify-between gap-6 shadow-xl shadow-amber-50"
+    >
+      <div className="flex items-center gap-5">
+        <div className="w-14 h-14 bg-amber-100 rounded-2xl flex items-center justify-center text-amber-600 shrink-0">
+          <ClipboardCheck size={28} />
+        </div>
+        <div>
+          <h4 className="font-bold text-amber-900 text-lg">Stock-Taking Reminder</h4>
+          <p className="text-sm text-amber-700/80 max-w-md">It has been over 30 days since your last inventory audit. Perform a regular count to ensure records match your physical stock.</p>
+        </div>
+      </div>
+      <button 
+        onClick={() => onNavigate('inventory')}
+        className="w-full sm:w-auto px-8 py-4 bg-amber-600 text-white rounded-2xl font-bold text-sm hover:bg-amber-700 transition-all shadow-lg shadow-amber-200 flex items-center justify-center gap-2"
+      >
+        <Zap size={18} />
+        Start Monthly Audit
+      </button>
+    </motion.div>
+  );
+}
+
 // --- Inventory Component ---
-function Inventory({ user, inventory, onUpdate }: { user: User | null, inventory: InventoryItem[], onUpdate: () => Promise<void> }) {
+function Inventory({ user, inventory, onUpdate, subscriptionTier, isTrialActive, changeTab }: { user: User | null, inventory: InventoryItem[], onUpdate: () => Promise<void>, subscriptionTier: string, isTrialActive: boolean, changeTab: (tab: any) => void }) {
   const [showAdd, setShowAdd] = useState(false);
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
+  const [showStockTake, setShowStockTake] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [upgradeFeature, setUpgradeFeature] = useState('');
+
+  const canUseAdvancedFeatures = subscriptionTier === 'pro' || isTrialActive;
+
+  const handleAdvancedFeatureAccess = (feature: string, action: () => void) => {
+    if (canUseAdvancedFeatures) {
+      action();
+    } else {
+      setUpgradeFeature(feature);
+      setShowUpgradeModal(true);
+    }
+  };
+
+  const [stockTakeItems, setStockTakeItems] = useState<StockTakeItem[]>([]);
+  const [stockTakeType, setStockTakeType] = useState<StockTake['type']>('monthly');
+  const [stockTakeNotes, setStockTakeNotes] = useState('');
+  const [bulkFile, setBulkFile] = useState<File | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
+  const [parsedItems, setParsedItems] = useState<Partial<InventoryItem>[]>([]);
+  const [conflicts, setConflicts] = useState<{ original: InventoryItem, incoming: Partial<InventoryItem>, resolution: 'merge' | 'new' | 'skip' }[]>([]);
+  const [uploadStep, setUploadStep] = useState<'upload' | 'review' | 'resolving' | 'saving'>('upload');
+
+  const exportToExcel = () => {
+    const exportData = inventory.map(item => ({
+      'Product Name': item.name,
+      'Description': item.description,
+      'Price (₦)': item.price,
+      'Stock Level': item.stock,
+      'Size/Unit': item.size,
+      'VAT Status': item.vat_status,
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Inventory");
+    XLSX.writeFile(workbook, `BizPulse_Inventory_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
+  };
+
+  const exportToPDF = () => {
+    const doc = new jsPDF();
+    
+    doc.setFontSize(20);
+    doc.text("BizPulse Inventory Report", 14, 22);
+    doc.setFontSize(11);
+    doc.setTextColor(100);
+    doc.text(`Generated on: ${format(new Date(), 'PPP p')}`, 14, 30);
+    
+    const tableColumn = ["Product Name", "Description", "Price (₦)", "Stock", "Size", "VAT Status"];
+    const tableRows = inventory.map(item => [
+      item.name,
+      item.description || '-',
+      item.price.toLocaleString(),
+      item.stock.toString(),
+      item.size || '-',
+      item.vat_status
+    ]);
+
+    autoTable(doc, {
+      head: [tableColumn],
+      body: tableRows,
+      startY: 40,
+      theme: 'grid',
+      headStyles: { fillColor: [5, 150, 105], textColor: 255, fontStyle: 'bold' },
+      styles: { fontSize: 9, cellPadding: 3 },
+      alternateRowStyles: { fillColor: [245, 253, 250] }
+    });
+
+    doc.save(`BizPulse_Inventory_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+  };
+
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [newItem, setNewItem] = useState<{name: string, description: string, price: string, stock: string, size: string, vat_status: 'vatable' | 'exempt' | 'zero_rated'}>({ name: '', description: '', price: '', stock: '', size: '', vat_status: 'vatable' });
   const [file, setFile] = useState<File | null>(null);
@@ -1575,6 +1763,227 @@ function Inventory({ user, inventory, onUpdate }: { user: User | null, inventory
     }
   };
 
+  const handleBulkFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBulkFile(file);
+    setIsParsing(true);
+    setUploadStep('upload');
+
+    try {
+      let items: Partial<InventoryItem>[] = [];
+      
+      if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls') || file.name.endsWith('.csv')) {
+        const data = await file.arrayBuffer();
+        const workbook = XLSX.read(data);
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet) as any[];
+        
+        items = jsonData.map(row => ({
+          name: row.Name || row.name || row.Product || row.product || row['Item Name'] || '',
+          description: row.Description || row.description || row.Details || '',
+          price: parseFloat(row.Price || row.price || row.Amount || 0),
+          stock: parseInt(row.Stock || row.stock || row.Quantity || row.Qty || 0),
+          size: row.Size || row.size || '',
+          vat_status: 'vatable' as const
+        })).filter(item => item.name);
+      } else if (file.name.endsWith('.pdf')) {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+        let fullText = "";
+        
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          fullText += textContent.items.map((item: any) => item.str).join(" ") + "\n";
+        }
+        
+        // Simple heuristic for PDF parsing - assuming one line per item or some structure
+        // This is a basic implementation. Ideally we'd want a table extractor.
+        const lines = fullText.split('\n');
+        items = lines.map(line => {
+          // Attempt to find patterns (Name Price Stock)
+          const parts = line.split(/\s{2,}/); // Split by 2 or more spaces
+          if (parts.length >= 2) {
+            return {
+              name: parts[0].trim(),
+              price: parseFloat((parts[1] || '0').replace(/[^0-9.]/g, '') || '0'),
+              stock: parseInt((parts[2] || '0').replace(/[^0-9]/g, '') || '0'),
+              description: parts.slice(3).join(' '),
+              vat_status: 'vatable' as const
+            };
+          }
+          return null;
+        }).filter(item => item && item.name) as Partial<InventoryItem>[];
+      }
+
+      if (items.length === 0) {
+        alert("No items found in the file. Please ensure it has headers like 'Name', 'Price', and 'Stock'.");
+        setBulkFile(null);
+        return;
+      }
+
+      // Check for duplicates
+      const foundConflicts: any[] = [];
+      const cleanItems: Partial<InventoryItem>[] = [];
+
+      items.forEach(incoming => {
+        const existing = inventory.find(i => i.name.toLowerCase().trim() === incoming.name?.toLowerCase().trim());
+        if (existing) {
+          foundConflicts.push({ original: existing, incoming, resolution: 'merge' });
+        } else {
+          cleanItems.push(incoming);
+        }
+      });
+
+      setParsedItems(cleanItems);
+      setConflicts(foundConflicts);
+      setUploadStep(foundConflicts.length > 0 ? 'review' : 'resolving');
+      
+    } catch (error) {
+      console.error("Bulk parse error:", error);
+      alert("Failed to parse file. Please try a different format or check the headers.");
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const processBulkUpload = async () => {
+    if (!user) return;
+    setUploadStep('saving');
+    setIsSubmitting(true);
+
+    try {
+      const itemsToUpload = [...parsedItems];
+      
+      // Process resolved conflicts
+      conflicts.forEach(c => {
+        if (c.resolution === 'merge') {
+          // Handled via updates
+        } else if (c.resolution === 'new') {
+          itemsToUpload.push(c.incoming);
+        }
+      });
+
+      const operations: any[] = [];
+      const userId = user.id;
+      
+      // 1. Create New Items
+      itemsToUpload.forEach(item => {
+        const docRef = doc(collection(db, 'users', userId, 'inventory'));
+        operations.push({ 
+          type: 'set', 
+          ref: docRef, 
+          data: {
+            ...item,
+            updatedAt: serverTimestamp()
+          } 
+        });
+      });
+
+      // 2. Update Merged Items
+      conflicts.filter(c => c.resolution === 'merge').forEach(c => {
+        const productRef = doc(db, 'users', userId, 'inventory', String(c.original.id));
+        const incomingStock = Number(c.incoming.stock) || 0;
+        operations.push({
+          type: 'update',
+          ref: productRef,
+          data: {
+            stock: increment(incomingStock),
+            price: Number(c.incoming.price) || c.original.price, 
+            updatedAt: serverTimestamp()
+          }
+        });
+      });
+
+      // Execute operations in batches of 400
+      for (let i = 0; i < operations.length; i += 400) {
+        const batch = writeBatch(db);
+        const chunk = operations.slice(i, i + 400);
+        chunk.forEach(op => {
+          if (op.type === 'set') batch.set(op.ref, op.data);
+          else if (op.type === 'update') batch.update(op.ref, op.data);
+        });
+        await batch.commit();
+      }
+
+      alert(`Success! Successfully processed ${operations.length} items.`);
+      setShowBulkUpload(false);
+      setBulkFile(null);
+      setConflicts([]);
+      setParsedItems([]);
+      await onUpdate();
+    } catch (error: any) {
+      console.error("Bulk upload error:", error);
+      alert("Error during bulk upload: " + error.message);
+    } finally {
+      setIsSubmitting(false);
+      setUploadStep('upload');
+    }
+  };
+
+  const startStockTake = () => {
+    const initialItems = inventory.map(item => ({
+      product_id: item.id,
+      name: item.name,
+      system_qty: item.stock,
+      actual_qty: item.stock,
+      variance: 0
+    }));
+    setStockTakeItems(initialItems);
+    setShowStockTake(true);
+  };
+
+  const updateActualQty = (productId: string, val: string) => {
+    const qty = parseInt(val) || 0;
+    setStockTakeItems(prev => prev.map(item => {
+      if (item.product_id === productId) {
+        return { ...item, actual_qty: qty, variance: qty - item.system_qty };
+      }
+      return item;
+    }));
+  };
+
+  const handleStockTakeSubmit = async () => {
+    if (!user) return;
+    setIsSubmitting(true);
+    try {
+      const userId = user.id;
+      // 1. Create Stock Take History Record
+      await addDoc(collection(db, 'users', userId, 'stock_takes'), {
+        date: new Date().toISOString(),
+        type: stockTakeType,
+        items: stockTakeItems,
+        status: 'completed',
+        notes: stockTakeNotes,
+        updatedAt: serverTimestamp()
+      });
+
+      // 2. Update Inventory Stock Levels
+      await Promise.all(stockTakeItems.map(async item => {
+        if (item.variance !== 0) {
+          const productRef = doc(db, 'users', userId, 'inventory', item.product_id);
+          await updateDoc(productRef, {
+            stock: item.actual_qty,
+            updatedAt: serverTimestamp()
+          });
+        }
+      }));
+
+      // 3. Update Business Reminder (optional/local)
+      localStorage.setItem(`last_stock_take_${userId}`, new Date().toISOString());
+
+      alert("Stock take completed and inventory updated successfully!");
+      setShowStockTake(false);
+      await onUpdate();
+    } catch (error: any) {
+      console.error("Stock take error:", error);
+      alert("Failed to complete stock take: " + error.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent | React.MouseEvent, type: 'save' | 'add-another' = 'save') => {
     if (e) e.preventDefault();
     if (isSubmitting) return;
@@ -1612,12 +2021,13 @@ function Inventory({ user, inventory, onUpdate }: { user: User | null, inventory
         stock: Number(newItem.stock),
         size: newItem.size || null,
         vat_status: newItem.vat_status,
-        photo_url
+        photo_url,
+        updatedAt: serverTimestamp()
       };
 
       if (editingItem) {
         try {
-          await updateDoc(doc(db, 'users', userId, 'inventory', editingItem.id.toString()), itemData);
+          await updateDoc(doc(db, 'users', userId, 'inventory', String(editingItem.id)), itemData);
         } catch (error) {
           handleFirestoreError(error, OperationType.UPDATE, `users/${userId}/inventory/${editingItem.id}`);
         }
@@ -1637,15 +2047,11 @@ function Inventory({ user, inventory, onUpdate }: { user: User | null, inventory
         setShowAdd(false);
       }
       
+      // onUpdate is empty now but we keep the await for potential future logic
       await onUpdate();
     } catch (error: any) {
-      console.error("Save error details:", error);
-      let displayError = error.message;
-      try {
-        const parsed = JSON.parse(error.message);
-        displayError = `Database permission error: ${parsed.error}. Ensure you are correctly logged in as the owner of this business.`;
-      } catch (e) {}
-      alert(displayError);
+      console.error("Inventory save error:", error);
+      alert("Failed to save to inventory: " + (error.message || "Unknown error"));
     } finally {
       setIsSubmitting(false);
       setSubmittingType(null);
@@ -1659,18 +2065,437 @@ function Inventory({ user, inventory, onUpdate }: { user: User | null, inventory
           <h3 className="text-2xl font-bold">Product Catalog</h3>
           <p className="text-stone-400 text-sm">Manage your business stock and pricing</p>
         </div>
-        <button 
-          onClick={() => {
-            setEditingItem(null);
-            setNewItem({ name: '', description: '', price: '', stock: '', size: '', vat_status: 'vatable' });
-            setShowAdd(!showAdd);
-          }}
-          className="bg-emerald-600 text-white px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-200"
-        >
-          <PlusCircle size={18} />
-          {showAdd ? 'Close Form' : 'Add Product'}
-        </button>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2 bg-stone-100 p-1 rounded-2xl mr-2">
+            <button 
+              onClick={exportToExcel}
+              className="px-4 py-2 text-xs font-bold text-stone-600 hover:bg-white hover:shadow-sm rounded-xl transition-all flex items-center gap-2"
+              title="Export to Excel"
+            >
+              <Download size={14} />
+              Excel
+            </button>
+            <button 
+              onClick={exportToPDF}
+              className="px-4 py-2 text-xs font-bold text-stone-600 hover:bg-white hover:shadow-sm rounded-xl transition-all flex items-center gap-2"
+              title="Export to PDF"
+            >
+              <FileText size={14} />
+              PDF
+            </button>
+          </div>
+          <button 
+            onClick={() => handleAdvancedFeatureAccess('Stock Count', startStockTake)}
+            className="bg-emerald-50 text-emerald-600 px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 hover:bg-emerald-100 transition-colors"
+          >
+            <ClipboardCheck size={18} />
+            Stock Count
+          </button>
+          <button 
+            onClick={() => handleAdvancedFeatureAccess('Bulk Upload', () => setShowBulkUpload(true))}
+            className="bg-stone-100 text-stone-600 px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 hover:bg-stone-200 transition-colors"
+          >
+            <Upload size={18} />
+            Bulk Upload
+          </button>
+          <button 
+            onClick={() => {
+              setEditingItem(null);
+              setNewItem({ name: '', description: '', price: '', stock: '', size: '', vat_status: 'vatable' });
+              setShowAdd(!showAdd);
+            }}
+            className="bg-emerald-600 text-white px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-200"
+          >
+            <PlusCircle size={18} />
+            {showAdd ? 'Close Form' : 'Add Product'}
+          </button>
+        </div>
       </div>
+
+      <AnimatePresence>
+        {showStockTake && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="bg-white w-full max-w-4xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="p-8 border-b border-stone-100 flex items-center justify-between shrink-0">
+                <div>
+                  <h4 className="text-xl font-bold">Physical Stock Taking</h4>
+                  <p className="text-sm text-stone-400">Verify and adjust your actual inventory items</p>
+                </div>
+                <button onClick={() => setShowStockTake(false)} className="p-2 hover:bg-stone-100 rounded-full transition-colors">
+                  <Trash2 size={20} className="text-stone-400" />
+                </button>
+              </div>
+
+              <div className="p-8 space-y-6 overflow-y-auto grow custom-scrollbar">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-stone-500 uppercase tracking-wider mb-2">Frequency</label>
+                    <select 
+                      value={stockTakeType}
+                      onChange={(e) => setStockTakeType(e.target.value as any)}
+                      className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                    >
+                      <option value="monthly">Monthly Audit</option>
+                      <option value="quarterly">Quarterly Audit</option>
+                      <option value="bi-annually">Bi-Annual Audit</option>
+                      <option value="annually">Annual Audit</option>
+                      <option value="ad-hoc">Ad-hoc Count</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-stone-500 uppercase tracking-wider mb-2">Internal Notes</label>
+                    <input 
+                      type="text"
+                      placeholder="e.g. End of year clearance"
+                      value={stockTakeNotes}
+                      onChange={(e) => setStockTakeNotes(e.target.value)}
+                      className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="bg-white border border-stone-200 rounded-2xl overflow-hidden shadow-sm">
+                  <table className="w-full text-left text-sm border-collapse">
+                    <thead className="bg-stone-50 border-b border-stone-200">
+                      <tr>
+                        <th className="px-6 py-4 font-bold text-stone-600">Product Name</th>
+                        <th className="px-6 py-4 font-bold text-stone-600">System Qty</th>
+                        <th className="px-6 py-4 font-bold text-stone-600">Actual Count</th>
+                        <th className="px-6 py-4 font-bold text-stone-600">Variance</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-100">
+                      {stockTakeItems.map((item) => (
+                        <tr key={item.product_id} className="hover:bg-stone-50 transition-colors">
+                          <td className="px-6 py-4">
+                            <span className="font-bold text-stone-900">{item.name}</span>
+                          </td>
+                          <td className="px-6 py-4 text-stone-500 font-mono">
+                            {item.system_qty}
+                          </td>
+                          <td className="px-6 py-4">
+                            <input 
+                              type="number"
+                              value={item.actual_qty}
+                              onChange={(e) => updateActualQty(item.product_id, e.target.value)}
+                              className="w-24 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-1.5 font-bold text-emerald-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                            />
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={cn(
+                              "font-bold font-mono px-2 py-1 rounded-md text-xs",
+                              item.variance === 0 ? "text-stone-400" : 
+                              item.variance > 0 ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                            )}>
+                              {item.variance > 0 ? `+${item.variance}` : item.variance}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="p-8 bg-stone-50 border-t border-stone-100 flex gap-4 shrink-0">
+                <button 
+                  onClick={() => setShowStockTake(false)}
+                  className="flex-1 py-4 bg-white border border-stone-200 text-stone-600 rounded-2xl font-bold hover:bg-stone-100 transition-all font-sans"
+                >
+                  Discard
+                </button>
+                <button 
+                  onClick={handleStockTakeSubmit}
+                  disabled={isSubmitting}
+                  className="flex-[2] py-4 bg-emerald-600 text-white rounded-2xl font-bold hover:bg-emerald-700 transition-all shadow-xl shadow-emerald-100 flex items-center justify-center gap-2 font-sans"
+                >
+                  {isSubmitting ? (
+                    <motion.div 
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                      className="w-5 h-5 border-2 border-white border-t-transparent rounded-full"
+                    />
+                  ) : <>
+                    <CheckCircle2 size={20} />
+                    Complete & Update System Stock
+                  </>}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showBulkUpload && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8 border-b border-stone-100 flex items-center justify-between">
+                <div>
+                  <h4 className="text-xl font-bold">Bulk Inventory Upload</h4>
+                  <p className="text-sm text-stone-400">Import products from Excel, CSV, or PDF</p>
+                </div>
+                <button onClick={() => setShowBulkUpload(false)} className="p-2 hover:bg-stone-100 rounded-full transition-colors">
+                  <Trash2 size={20} className="text-stone-400" />
+                </button>
+              </div>
+
+              <div className="p-8">
+                {uploadStep === 'upload' && (
+                  <div className="space-y-6">
+                    <div className="border-2 border-dashed border-stone-200 rounded-[2rem] p-12 flex flex-col items-center justify-center text-center group hover:border-emerald-500 hover:bg-emerald-50 transition-all cursor-pointer relative">
+                      <input 
+                        type="file" 
+                        accept=".xlsx,.xls,.csv,.pdf"
+                        onChange={handleBulkFileSelect}
+                        className="absolute inset-0 opacity-0 cursor-pointer"
+                      />
+                      <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                        <Upload size={32} />
+                      </div>
+                      <h5 className="font-bold text-lg mb-1">{bulkFile ? bulkFile.name : 'Choose a file'}</h5>
+                      <p className="text-stone-400 text-sm max-w-xs">Drop your Excel/CSV/PDF here. Ensure headers like Name, Price, and Stock exist.</p>
+                    </div>
+
+                    <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
+                      <h6 className="font-bold text-xs uppercase tracking-wider text-stone-500 mb-3 ml-1">Example Header Format</h6>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="bg-white p-2 rounded-lg border border-stone-200 font-mono text-[10px] text-center">Name</div>
+                        <div className="bg-white p-2 rounded-lg border border-stone-200 font-mono text-[10px] text-center">Price</div>
+                        <div className="bg-white p-2 rounded-lg border border-stone-200 font-mono text-[10px] text-center">Stock</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {isParsing && (
+                  <div className="py-12 flex flex-col items-center justify-center">
+                    <motion.div 
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                      className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full mb-4"
+                    />
+                    <p className="font-bold text-stone-600">Analyzing your file...</p>
+                    <p className="text-sm text-stone-400">Detection duplicates and formats</p>
+                  </div>
+                )}
+
+                {uploadStep === 'review' && (
+                  <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                    <div className="bg-amber-50 border border-amber-100 p-4 rounded-2xl flex items-start gap-3 mb-6">
+                      <AlertCircle className="text-amber-600 shrink-0" size={20} />
+                      <div>
+                        <p className="text-sm font-bold text-amber-900">{conflicts.length} Duplicates Found</p>
+                        <p className="text-xs text-amber-700">Choose how to handle items that already exist in your catalog.</p>
+                      </div>
+                    </div>
+
+                    {conflicts.map((conflict, idx) => (
+                      <div key={idx} className="p-4 rounded-2xl border border-stone-200 bg-white space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h6 className="font-bold text-stone-900">{conflict.original.name}</h6>
+                          <div className="flex gap-2 bg-stone-100 p-1 rounded-xl">
+                            <button 
+                              onClick={() => {
+                                const newConflicts = [...conflicts];
+                                newConflicts[idx].resolution = 'merge';
+                                setConflicts(newConflicts);
+                              }}
+                              className={cn(
+                                "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
+                                conflict.resolution === 'merge' ? "bg-white text-emerald-600 shadow-sm" : "text-stone-500 hover:text-stone-800"
+                              )}
+                            >
+                              Add to Stock
+                            </button>
+                            <button 
+                              onClick={() => {
+                                const newConflicts = [...conflicts];
+                                newConflicts[idx].resolution = 'new';
+                                setConflicts(newConflicts);
+                              }}
+                              className={cn(
+                                "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
+                                conflict.resolution === 'new' ? "bg-white text-blue-600 shadow-sm" : "text-stone-500 hover:text-stone-800"
+                              )}
+                            >
+                              Create New
+                            </button>
+                            <button 
+                              onClick={() => {
+                                const newConflicts = [...conflicts];
+                                newConflicts[idx].resolution = 'skip';
+                                setConflicts(newConflicts);
+                              }}
+                              className={cn(
+                                "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
+                                conflict.resolution === 'skip' ? "bg-white text-rose-600 shadow-sm" : "text-stone-500 hover:text-stone-800"
+                              )}
+                            >
+                              Skip
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex gap-4 text-[10px]">
+                          <div className="text-stone-400">Current: <span className="text-stone-900 font-medium">₦{conflict.original.price} ({conflict.original.stock} in stock)</span></div>
+                          <div className="text-emerald-600 font-bold">New: <span className="font-bold">₦{conflict.incoming.price} (+{conflict.incoming.stock} stock)</span></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {uploadStep === 'resolving' && (
+                  <div className="py-12 text-center">
+                    <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                      <CheckCircle2 size={40} />
+                    </div>
+                    <h5 className="font-bold text-xl mb-2">Ready to Upload</h5>
+                    <p className="text-stone-400 mb-8 max-w-sm mx-auto">
+                      All systems go! We found <span className="text-emerald-600 font-bold">{parsedItems.length} new items</span> to add to your catalog.
+                    </p>
+                  </div>
+                )}
+
+                {uploadStep === 'saving' && (
+                  <div className="py-20 flex flex-col items-center justify-center">
+                    <motion.div 
+                      animate={{ scale: [1, 1.1, 1] }}
+                      transition={{ duration: 1.5, repeat: Infinity }}
+                      className="w-24 h-24 bg-emerald-50 text-emerald-600 rounded-3xl flex items-center justify-center mb-6"
+                    >
+                      <Cloud size={48} className="animate-pulse" />
+                    </motion.div>
+                    <p className="font-bold text-lg mb-1">Saving to Cloud...</p>
+                    <p className="text-stone-400 text-sm">Please don't close this window</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-8 bg-stone-50 border-t border-stone-100 flex gap-4">
+                <button 
+                  onClick={() => setShowBulkUpload(false)}
+                  className="flex-1 py-4 bg-white border border-stone-200 text-stone-600 rounded-2xl font-bold hover:bg-stone-100 transition-all"
+                >
+                  Cancel
+                </button>
+                {(uploadStep === 'review' || uploadStep === 'resolving') && (
+                  <button 
+                    onClick={processBulkUpload}
+                    disabled={isSubmitting}
+                    className="flex-[2] py-4 bg-emerald-600 text-white rounded-2xl font-bold hover:bg-emerald-700 transition-all shadow-xl shadow-emerald-100 flex items-center justify-center gap-2"
+                  >
+                    {isSubmitting ? (
+                      <motion.div 
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                        className="w-5 h-5 border-2 border-white border-t-transparent rounded-full"
+                      />
+                    ) : <>
+                      <Zap size={20} />
+                      Apply & Sync to Catalog
+                    </>}
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showUpgradeModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl p-10 text-center relative"
+            >
+              <button 
+                onClick={() => setShowUpgradeModal(false)}
+                className="absolute top-6 right-6 p-2 hover:bg-stone-100 rounded-full transition-colors text-stone-400"
+              >
+                <X size={20} />
+              </button>
+
+              <div className="w-20 h-20 bg-amber-100 rounded-[2rem] flex items-center justify-center text-amber-600 mx-auto mb-6 shadow-lg shadow-amber-50">
+                <Shield size={40} />
+              </div>
+              
+              <h3 className="text-2xl font-bold text-stone-900 mb-2">Pro Feature Protected</h3>
+              <p className="text-stone-500 mb-8 lowercase leading-relaxed">
+                The <span className="font-bold text-stone-800 text-base">{upgradeFeature}</span> feature is available during your 14-day trial or with our <span className="font-bold text-emerald-600 uppercase tracking-wider text-xs">Pro Plan</span>. 
+              </p>
+              
+              <div className="bg-stone-50 rounded-2xl p-6 mb-8 text-left border border-stone-100">
+                <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-4">Included in Pro Plan:</p>
+                <ul className="space-y-3">
+                  <li className="flex items-center gap-3 text-sm text-stone-600">
+                    <div className="w-5 h-5 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600 shrink-0">
+                      <CheckCircle2 size={12} />
+                    </div>
+                    Automated Physical Stock-Taking
+                  </li>
+                  <li className="flex items-center gap-3 text-sm text-stone-600">
+                    <div className="w-5 h-5 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600 shrink-0">
+                      <CheckCircle2 size={12} />
+                    </div>
+                    Bulk Inventory Data Support
+                  </li>
+                  <li className="flex items-center gap-3 text-sm text-stone-600">
+                    <div className="w-5 h-5 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600 shrink-0">
+                      <CheckCircle2 size={12} />
+                    </div>
+                    AI Business Advisory & AI Chat
+                  </li>
+                </ul>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                <button 
+                  onClick={() => {
+                    setShowUpgradeModal(false);
+                    changeTab('settings');
+                  }}
+                  className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold hover:bg-emerald-700 transition-all shadow-xl shadow-emerald-100 flex items-center justify-center gap-2"
+                >
+                   <Zap size={18} />
+                  Upgrade to Pro Now
+                </button>
+                <button 
+                  onClick={() => setShowUpgradeModal(false)}
+                  className="w-full py-4 text-stone-400 text-sm font-bold hover:text-stone-600 transition-all"
+                >
+                  Maybe Later
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {showAdd && (
         <motion.div 
@@ -2489,22 +3314,35 @@ function Transactions({ user, transactions, inventory, customers, onUpdate }: { 
           {/* Cart / List Display */}
           {cart.length > 0 && (
             <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="font-bold text-lg">Items in this {type === 'sale' ? 'Sale' : 'Expense'}</h3>
-                <div className="flex items-center gap-3">
-                  <button onClick={() => setCart([])} className="text-xs font-bold text-rose-500 hover:underline">Clear</button>
-                  {cart.length > 0 && (
-                    <button 
-                      onClick={(e) => {
-                        e.preventDefault();
-                        handleSubmit(e as any);
-                      }}
-                      disabled={isSubmitting}
-                      className="text-xs font-bold bg-emerald-600 text-white px-3 py-1.5 rounded-lg shadow-sm hover:bg-emerald-700 transition-all disabled:opacity-50"
-                    >
-                      {isSubmitting ? 'Saving...' : 'Finish & Save'}
-                    </button>
-                  )}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-6">
+                <div>
+                  <h3 className="font-bold text-lg">Items in this {type === 'sale' ? 'Sale' : 'Expense'}</h3>
+                  <p className="text-xs text-stone-400">{cart.length} items added to pending list</p>
+                </div>
+                <div className="flex items-center gap-3 w-full sm:w-auto">
+                  <button 
+                    onClick={() => setCart([])} 
+                    className="flex-1 sm:flex-none py-2 px-4 text-xs font-bold text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                  >
+                    Clear All
+                  </button>
+                  <button 
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleSubmit(e as any);
+                    }}
+                    disabled={isSubmitting}
+                    className="flex-[2] sm:flex-none bg-emerald-600 text-white px-6 py-2.5 rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isSubmitting ? (
+                      <motion.div 
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                        className="w-4 h-4 border-2 border-white border-t-transparent rounded-full"
+                      />
+                    ) : <CheckCircle2 size={18} />}
+                    {isSubmitting ? 'Saving...' : 'Finish & Save List'}
+                  </button>
                 </div>
               </div>
               <div className="space-y-3">

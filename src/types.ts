@@ -53,6 +53,23 @@ export interface DailyStat {
   date: string;
 }
 
+export interface StockTakeItem {
+  product_id: string;
+  name: string;
+  system_qty: number;
+  actual_qty: number;
+  variance: number;
+}
+
+export interface StockTake {
+  id: string;
+  date: string;
+  type: 'monthly' | 'quarterly' | 'bi-annually' | 'annually' | 'ad-hoc';
+  items: StockTakeItem[];
+  status: 'pending' | 'completed';
+  notes?: string;
+}
+
 export interface User {
   id: string;
   email: string;
