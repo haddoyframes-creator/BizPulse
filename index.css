@@ -1,0 +1,114 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-serif: "Libre Baskerville", serif;
+}
+
+@layer base {
+  body {
+    @apply bg-stone-50 text-stone-900;
+  }
+}
+
+.prose h1, .prose h2, .prose h3 {
+  @apply font-bold tracking-tight text-stone-900 mt-6 mb-4;
+}
+
+.prose p {
+  @apply mb-4 leading-relaxed text-stone-600;
+}
+
+.prose table {
+  @apply w-full text-left border-collapse mb-6;
+}
+
+.prose th {
+  @apply border-b-2 border-stone-200 py-2 px-4 font-bold text-stone-900 bg-stone-50;
+}
+
+.prose td {
+  @apply border-b border-stone-100 py-2 px-4 text-stone-600;
+}
+
+.prose ul {
+  @apply list-disc list-inside mb-4 space-y-2 text-stone-600;
+}
+
+.prose strong {
+  @apply text-stone-900 font-bold;
+}
+
+/* Legacy color overrides for html2canvas (doesn't support oklch) */
+.cac-report-container {
+  color: #1c1917 !important; /* stone-900 */
+  background-color: #ffffff !important;
+  display: block !important;
+  height: auto !important;
+  overflow: visible !important;
+  font-family: "Times New Roman", Times, serif !important;
+  line-height: 1.5 !important;
+  text-rendering: auto !important;
+  -webkit-font-smoothing: antialiased !important;
+}
+
+.cac-report-container * {
+  color: inherit;
+  border-color: #e7e5e4 !important; /* stone-200 */
+  visibility: visible !important;
+  opacity: 1 !important;
+  font-size: 14px !important; /* Standard document font size in px */
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
+}
+
+.cac-report-container h1 { font-size: 24px !important; margin-bottom: 8px !important; }
+.cac-report-container h2 { font-size: 18px !important; margin-bottom: 4px !important; }
+.cac-report-container h3 { font-size: 16px !important; margin-bottom: 12px !important; }
+
+.cac-report-container section {
+  display: block !important;
+  page-break-inside: avoid !important;
+  margin-bottom: 24px !important;
+}
+
+.cac-report-container table {
+  width: 100% !important;
+  border-collapse: collapse !important;
+  margin-bottom: 16px !important;
+}
+
+.cac-report-container td {
+  padding: 8px 0 !important;
+  border-bottom: 1px solid #f5f5f4 !important;
+  vertical-align: top !important;
+}
+
+.cac-report-container .report-label {
+  width: 40% !important;
+  color: #78716c !important; /* stone-500 */
+  font-weight: normal !important;
+  text-align: left !important;
+}
+
+.cac-report-container .report-value {
+  width: 60% !important;
+  font-weight: bold !important;
+  color: #1c1917 !important; /* stone-900 */
+  text-align: left !important;
+}
+
+.cac-report-container .text-stone-900 { color: #1c1917 !important; }
+.cac-report-container .text-stone-600 { color: #57534e !important; }
+.cac-report-container .text-stone-500 { color: #78716c !important; }
+.cac-report-container .text-stone-400 { color: #a8a29e !important; }
+.cac-report-container .text-emerald-600 { color: #059669 !important; }
+.cac-report-container .text-rose-600 { color: #e11d48 !important; }
+
+.cac-report-container .border-stone-200 { border-color: #e7e5e4 !important; }
+.cac-report-container .border-stone-100 { border-color: #f5f5f4 !important; }
+.cac-report-container .border-stone-400 { border-color: #a8a29e !important; }
+
+.cac-report-container .bg-white { background-color: #ffffff !important; }

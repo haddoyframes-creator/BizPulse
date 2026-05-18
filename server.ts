@@ -752,15 +752,12 @@ async function startServer() {
     // Detect production mode - handle edge cases with spaces or caps
     const nodeEnv = (process.env.NODE_ENV || "").trim().toLowerCase();
     const isRunningCompiled = process.argv[1] && (
-      process.argv[1].endsWith('app.js') || 
-      process.argv[1].endsWith('app.cjs') || 
-      process.argv[1].endsWith('index.js') ||
-      process.argv[1].includes('node_modules') // Often true for Hostinger's node process
+      process.argv[1].endsWith('server.cjs') || 
+      process.argv[1].includes('node_modules')
     );
     const distExists = fs.existsSync(path.resolve("dist"));
     
-    // On Hostinger, if we have a dist folder and are running in a constrained environment, 
-    // we should ALWAYS default to production mode to avoid permission errors with Vite/esbuild.
+    // In production environments with a dist folder, we default to serving static files.
     const isProduction = nodeEnv === "production" || isRunningCompiled || (distExists && nodeEnv !== "development");
     
     console.log(`Diagnostic: env=${nodeEnv}, compiled=${isRunningCompiled}, dist=${distExists} -> isProduction=${isProduction}`);
