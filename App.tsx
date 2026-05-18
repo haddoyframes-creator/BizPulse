@@ -1948,10 +1948,11 @@ function Inventory({ user, inventory, onUpdate, subscriptionTier, isTrialActive,
         await batch.commit();
       }
 
-      setShowBulkUpload(false);
       setBulkFile(null);
       setConflicts([]);
       setParsedItems([]);
+      setIsSubmitting(false);
+      setUploadStep('upload');
       alert(`Success! Successfully processed ${operations.length} items.`);
       await onUpdate();
     } catch (error: any) {
@@ -2015,6 +2016,7 @@ function Inventory({ user, inventory, onUpdate, subscriptionTier, isTrialActive,
       localStorage.setItem(`last_stock_take_${userId}`, new Date().toISOString());
 
       setShowStockTake(false);
+      setIsSubmitting(false);
       alert("Stock take completed and inventory updated successfully!");
       await onUpdate();
     } catch (error: any) {
@@ -2087,6 +2089,9 @@ function Inventory({ user, inventory, onUpdate, subscriptionTier, isTrialActive,
       if (type === 'save') {
         setShowAdd(false);
       }
+      
+      setIsSubmitting(false);
+      setSubmittingType(null);
       
       // onUpdate is empty now but we keep the await for potential future logic
       await onUpdate();
@@ -2994,9 +2999,11 @@ function Transactions({ user, transactions, inventory, customers, onUpdate }: { 
       setEditingId(null);
       setDate(new Date().toISOString().split('T')[0]);
       
+      setIsSubmitting(false);
       await onUpdate();
     } catch (error) {
       console.error("Transaction error:", error);
+      setIsSubmitting(false);
       alert("Failed to record transaction");
     } finally {
       setIsSubmitting(false);
@@ -3523,9 +3530,11 @@ function Customers({ customers, onUpdate }: { customers: Customer[], onUpdate: (
       if (!res.ok) throw new Error("Failed to save customer");
       setNewCustomer({ name: '', email: '', phone: '', address: '' });
       setShowAdd(false);
+      setIsSubmitting(false);
       await onUpdate();
     } catch (error) {
       console.error(error);
+      setIsSubmitting(false);
       alert("Failed to save customer");
     } finally {
       setIsSubmitting(false);
@@ -5426,9 +5435,11 @@ function SettingsView({ user, business, onUpdate, onNavigate }: { user: User | n
       }
       
       onUpdate();
+      setIsSubmitting(false);
       alert('Settings saved!');
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users/${userId}/business_info/info`);
+      setIsSubmitting(false);
       alert("Failed to save settings");
     } finally {
       setIsSubmitting(false);
